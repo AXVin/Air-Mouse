@@ -4,15 +4,16 @@ plugins {
 }
 
 android {
-    namespace = "com.example.tvairmouse"
+    namespace = "com.example.airmouse"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.tvairmouse"
+        applicationId = "com.axvin.airmouse"
         minSdk = 28 // Android 9.0+ required for BluetoothHidDevice API
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "2.0"
+        setProperty("archivesBaseName", "Air Mouse")
     }
 
     buildTypes {
@@ -30,5 +31,5 @@ android {
 }
 
 dependencies {
-    // Uses zero external libraries so builds succeed rapidly and reliably
+    // Zero external dependencies for fast, reliable compilation
 }
