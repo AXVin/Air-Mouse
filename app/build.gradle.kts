@@ -12,8 +12,8 @@ android {
         minSdk = 28 // Android 9.0+ required for BluetoothHidDevice API
         targetSdk = 34
         versionCode = 4
-        versionName = "4.0"
-        setProperty("archivesBaseName", "Air Mouse")
+        versionName = "4.0.1"
+        base.archivesName.set("Air Mouse")
     }
 
     buildTypes {

@@ -1576,7 +1576,7 @@ class MainActivity : Activity(), SensorEventListener {
                 color = Color.parseColor("#94A3B8")
                 textAlign = Paint.Align.CENTER
                 typeface = Typeface.DEFAULT_BOLD
-                textSize = dp(8.5f).toFloat()
+                textSize = dp(9).toFloat()
             }
 
             override fun onDraw(canvas: Canvas) {
@@ -1969,7 +1969,7 @@ class MainActivity : Activity(), SensorEventListener {
                 color = Color.parseColor("#94A3B8")
                 textAlign = Paint.Align.CENTER
                 typeface = Typeface.DEFAULT_BOLD
-                textSize = dp(9.5f).toFloat()
+                textSize = dp(10).toFloat()
             }
 
             override fun onDraw(canvas: Canvas) {
@@ -2968,6 +2968,14 @@ class MainActivity : Activity(), SensorEventListener {
         return TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_DIP,
             value.toFloat(),
+            resources.displayMetrics
+        ).roundToInt()
+    }
+
+    private fun dp(value: Float): Int {
+        return TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            value,
             resources.displayMetrics
         ).roundToInt()
     }
