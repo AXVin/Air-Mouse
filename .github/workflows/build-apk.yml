@@ -1,16 +1,32 @@
-name: Build Air Mouse APK
+name: Build & Release Air Mouse APK
 
 on:
   push:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  build-apk:
+  build-and-release:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract App Version for Release Tag
+        id: version
+        run: |
+          RAW_VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts || echo "1.0")
+          TAG="v${RAW_VERSION}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            TAG="v${RAW_VERSION}.${{ github.run_number }}"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$RAW_VERSION" >> $GITHUB_OUTPUT
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -28,8 +44,18 @@ jobs:
           gradle assembleDebug --no-daemon
           cp app/build/outputs/apk/debug/*.apk "app/build/outputs/apk/debug/Air Mouse.apk"
 
-      - name: Upload Compiled Air Mouse APK
+      - name: Upload Compiled Air Mouse APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Air-Mouse-APK
           path: "app/build/outputs/apk/debug/Air Mouse.apk"
+
+      - name: Create GitHub Release with APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "Air Mouse ${{ steps.version.outputs.tag }}"
+          files: "app/build/outputs/apk/debug/Air Mouse.apk"
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
