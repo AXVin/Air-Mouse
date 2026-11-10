@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "TvAirMouseHid"
+rootProject.name = "Air Mouse"
 include(":app")

@@ -1,24 +1,23 @@
-# TV Air-Mouse & Keyboard (Bluetooth HID)
+# Air Mouse (Created by AXVin)
 
 Turns an Android 9+ (API 28+) phone into a native **Bluetooth HID Combo Air-Mouse & Keyboard** for your Smart TV (Android TV, Google TV, Fire TV, LG webOS, Samsung Tizen, or PC) with zero software required on the TV.
 
-## Features
-- **Gyroscope 60Hz Air-Mouse**: Hold the **Hold to Move Air Pointer** button (or toggle **Lock Air-Mouse On**) and point your phone like a laser pointer to move the TV cursor smoothly. Automatically falls back to accelerometer tilt if your phone lacks a hardware gyroscope.
-- **Multi-Function Touchpad & Scroll Strip**: Slide one finger to move the pointer, tap to left-click, or slide along the right scroll strip to scroll pages vertically.
-- **TV Remote & Navigation Keys**: Dedicated D-Pad (`UP`, `DOWN`, `LEFT`, `RIGHT`, `OK / ENTER`), `ESC / BACK`, `SPACE`, `TAB`, and `BACKSPACE` buttons.
-- **Keyboard Input**: Type or paste text and tap **Send Text** (or press the soft keyboard's Send key) to type directly into TV search bars, browsers, and login fields.
+## What's New in v2.0 (by AXVin)
+- **Trackpad Auto Scroll-Lock Mode**: Touching the trackpad or scroll strip automatically locks vertical screen scrolling (`LockableScrollView` + `requestDisallowInterceptTouchEvent`) so the app UI never shifts up or down while moving your fingers.
+- **Real-Time Live Keyboard**: Every character, Space, Backspace, and Enter key is sent immediately to the TV as you type—no "Send Text" button required.
+- **Custom "Air Mouse" Logo & Branding**: Includes the custom **Air Mouse** launcher icon, in-app header logo, **Created by AXVin** attribution badge, and outputs **`Air Mouse.apk`**.
+- **Gyroscope 60Hz Air-Mouse**: Hold the **Hold to Move Air Pointer** button (or toggle **Lock Air-Mouse On**) to move the TV cursor with your phone's gyroscope (with automatic accelerometer fallback).
 
 ---
 
-## How to Get the `.apk` File (2 Easy Ways)
+## How to Get `Air Mouse.apk`
 
 ### Option 1: Build Automatically in the Cloud via GitHub Actions (No PC Setup Needed)
 1. Create a new repository on [GitHub](https://github.com/new).
-2. Extract `TvAirMouseHidProject.zip` and upload all files (including the `.github/workflows/build-apk.yml` folder) to your repository.
-3. Open the **Actions** tab in your GitHub repository and click the **Build TV Air-Mouse APK** workflow run.
-4. Once it finishes (~2 minutes), scroll down to **Artifacts** and download **`TvAirMouse-debug-apk`** (`app-debug.apk`) directly to your phone.
+2. Extract `AirMouseProject.zip` and upload all files (including `.github/workflows/build-apk.yml`) to your repository.
+3. Open the **Actions** tab in your GitHub repository and select the **Build Air Mouse APK** workflow run.
+4. Once completed, download **`Air-Mouse-APK`** (containing **`Air Mouse.apk`**) under **Artifacts**.
 
 ### Option 2: Build Locally in Android Studio
-1. Extract `TvAirMouseHidProject.zip` and open the folder in **Android Studio**.
-2. Wait for Gradle sync to finish, then select **Build -> Build Bundle(s) / APK(s) -> Build APK(s)**.
-3. Install `app/build/outputs/apk/debug/app-debug.apk` on your Android phone.
+1. Extract `AirMouseProject.zip` and open the folder in **Android Studio**.
+2. Select **Build -> Build Bundle(s) / APK(s) -> Build APK(s)** to produce **`Air Mouse-debug.apk`**.
