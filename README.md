@@ -1,17 +1,15 @@
-# Air Mouse v3.0 (Created by AXVin)
+# Air Mouse v4.0 (Created by AXVin)
 
-Turns an Android 9+ (API 28+) phone into a complete **Bluetooth HID Multi-Controller** (Air Mouse, Keyboard, Media & TV Remote with Circular Rotary Dials, Gamepad with Xbox 360 / PS5 / Mobile Pro layouts, and System Power Controller) with zero software required on the TV.
+Turns an Android 9+ (API 28+) phone into a complete **Bluetooth HID Multi-Controller** (Multi-Gesture Trackpad & Gyro Air Mouse, Landscape Full PC Keyboard with Sticky Modifiers, Media & TV Remote with Volume % Dial & Fixed Seek Jog Wheel, Landscape Gamepad, and System Power Controls).
 
-## Features in v3.0
-- **Top Multi-Device Bluetooth Bar**:
-  - **High-Contrast Device Dropdown**: Custom white-on-dark rendering for both selected and dropdown items across all Android themes and OEM skins.
-  - **Instant Multi-Device Switcher**: Select from the dropdown or tap any paired device pill to switch active HID connections immediately.
-  - **Reset Conn & Unpair Buttons**: One-tap Bluetooth HID connection reset and one-tap device unpairing (`removeBond`).
-- **4 Dedicated Top Tabs**:
-  1. **Air Mouse & Keyboard**: 60Hz Gyroscope Air-Mouse (with Accelerometer fallback), Auto Scroll-Lock Trackpad & Scroll Strip, and clean real-time Live Keyboard input.
-  2. **Media and TV**: Dual interactive Circular Rotary Dials (Volume Rotary Dial + Timeline Seek Jog Wheel with center Mute/Play-Pause taps and auto scroll-lock) plus Consumer Control TV keys (`Vol +/-`, `Mute`, `Ch +/-`, `Play/Pause`, `Rewind`, `Fast Fwd`, `TV Home`, `TV Back`, `Voice/Search`, `Browser`).
-  3. **GamePad**: Full 16-button + 8-way D-Pad + Dual Analog Stick Bluetooth HID Gamepad with switchable **Xbox 360**, **PS5 DualSense**, and **Mobile Pro** layouts plus **Gyro Tilt Steering**.
-  4. **System Power**: Hardware HID System Power Off, System Sleep, System Wake Up, TV Power Toggle, Media Sleep, Screen Lock, Close App (`Alt+F4`), and App Switcher (`Alt+Tab`).
-- **Support AXVin**:
-  - Patreon: [https://www.patreon.com/axvin](https://www.patreon.com/axvin)
-  - Ko-fi: [https://ko-fi.com/axvin](https://ko-fi.com/axvin)
+## What's New in v4.0
+- **Collapsible Connection Bar + Settings Dialog (⚙️)**:
+  - Removed the top branding header for maximum workspace.
+  - Status is integrated into the collapsible **Connection Bar** at the top, which **automatically collapses** when a Bluetooth device connects.
+  - Added a top **⚙️ Settings** button to individually enable/disable every multi-finger trackpad gesture and configure **Hardware Volume Up/Down as Left/Right Mouse Clicks** (with an option to invert or disable).
+- **5 High-Visibility Segmented Tabs**:
+  1. **Air Mouse (Portrait)**: Enlarged 310dp Multi-Gesture Trackpad (`1-Finger Move/Tap`, `2-Finger Tap Right Click`, `2-Finger Vertical & Horizontal Scroll`, `2-Finger Pinch-to-Zoom`, `3-Finger Swipe Back/Forward/Apps/Home`), Gyro Air-Pointer, and inline quick keyboard.
+  2. **Keyboard (Landscape)**: Full PC-style keyboard with **Sticky Modifiers** (`CTRL`, `ALT`, `SHIFT`, `WIN` stay latched on tap for easy combos like `Ctrl+C`), `CAPS` toggle, `F1–F12`, and arrow cluster.
+  3. **Media (Portrait)**: Fixed **Seek Jog Wheel** (sends Arrow Seek or Media FF/RW smoothly) + **Volume Rotary Dial** displaying live **Volume %** in the center with a dedicated **🔇 Mute** icon button right above it.
+  4. **Gamepad (Landscape)**: Widescreen horizontal layout with **Xbox 360**, **PS5 DualSense**, and **Mobile Pro** presets + **Gyro Tilt Steering**.
+  5. **System Power (Portrait)**: System Power Off, Sleep, Wake Up, Lock Screen, and App Switcher controls.

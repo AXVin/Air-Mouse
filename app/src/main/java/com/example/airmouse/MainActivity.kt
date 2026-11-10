@@ -3,6 +3,7 @@ package com.example.airmouse
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothHidDevice
@@ -12,12 +13,13 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Path
-import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.hardware.Sensor
@@ -46,9 +48,9 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.HorizontalScrollView
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -66,61 +68,66 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * Air Mouse v3.0 — Created by AXVin
+ * Air Mouse v4.0 — Created by AXVin
  *
- * Complete Bluetooth HID Multi-Tool Suite for Smart TVs & Media Devices:
- * 1. "Air Mouse & Keyboard" Tab:
- *    - 60Hz Gyroscope Air-Mouse (with Accelerometer fallback)
- *    - Auto Scroll-Lock Trackpad & Scroll Strip
- *    - Clean Live Keypress-by-Keypress Keyboard (no "Send Text" button or clutter)
- * 2. "Media and TV" Tab:
- *    - Consumer Control HID (Report ID 3) for native TV Volume, Channels, Transport & App keys
- *    - Interactive Circular Rotary Dial (Volume + Mute) & Jog Wheel (Timeline Seek/Scrub + Play/Pause)
- * 3. "GamePad" Tab:
- *    - Composite HID Gamepad (Report ID 4) with 16 buttons, 8-way Hat D-Pad, Dual Analog Joysticks,
- *      and Gyro Tilt Steering
- *    - 3 Switchable Controller Layouts: Xbox 360, PS5 DualSense, and Mobile Pro
- * 4. "System Power" Tab:
- *    - System Control HID (Report ID 5) for System Power Down, System Sleep, System Wake Up,
- *      TV Power Toggle, Screen Sleep, Close Active App, and Task Switcher
- * - Top Connection Bar with high-contrast cross-device Dropdown, Instant Multi-Device Switcher,
- *   Reset Connection button, and Unpair Current Device button
- * - Creator support links for AXVin on Patreon (https://www.patreon.com/axvin) and Ko-fi (https://ko-fi.com/axvin)
+ * Key Upgrades in v4.0:
+ * - Removed top branding header for maximum screen workspace; moved Status into a Collapsible
+ *   Connection Bar at the top that automatically collapses when a Bluetooth device connects.
+ * - Top Settings Button (⚙️) to toggle individual multi-finger trackpad gestures and hardware
+ *   Volume button mouse-click behavior (Enable/Disable + Invert Volume Up/Down).
+ * - 5 High-Visibility Segmented Tabs:
+ *   1. "Air Mouse" (Portrait): Enlarged Trackpad with Laptop Multi-Finger Gestures (1-finger move/tap,
+ *      2-finger tap right-click, 2-finger vertical & horizontal scroll, 2-finger pinch-to-zoom,
+ *      3-finger swipe Back/Forward/Home/Recents) + Gyro Air-Pointer + inline quick keyboard.
+ *   2. "Keyboard" (Landscape): Full PC Keyboard with Sticky Modifiers (Ctrl, Alt, Shift, GUI/Win),
+ *      Caps Lock toggle, Function keys, Arrow cluster, and easy shortcut combinations (e.g. Ctrl+C).
+ *   3. "Media" (Portrait): Fixed Timeline Seek Jog Wheel (sends Arrow Seek / FF-RW reliably) +
+ *      Volume Rotary Dial showing live Volume % in the center and a dedicated Mute icon button nearby.
+ *   4. "Gamepad" (Landscape): Wide horizontal controller layout with Xbox 360, PS5 DualSense,
+ *      and Mobile Pro presets + Gyro Tilt Steering.
+ *   5. "System Power" (Portrait): System Power Off, Sleep, Wake, Lock, and App control shortcuts.
  */
 @SuppressLint("MissingPermission", "ClickableViewAccessibility", "SetTextI18n")
 class MainActivity : Activity(), SensorEventListener {
 
     companion object {
         private const val REQ_PERMISSIONS = 1001
+        private const val PREFS_NAME = "air_mouse_prefs"
+
         private const val REPORT_ID_KEYBOARD = 1
         private const val REPORT_ID_MOUSE = 2
         private const val REPORT_ID_CONSUMER = 3
         private const val REPORT_ID_GAMEPAD = 4
         private const val REPORT_ID_SYSTEM = 5
 
+        // Modifier bits (USB HID Keyboard)
+        private const val MOD_LEFT_CTRL = 0x01
+        private const val MOD_LEFT_SHIFT = 0x02
+        private const val MOD_LEFT_ALT = 0x04
+        private const val MOD_LEFT_GUI = 0x08
+
         private const val SENTINEL_CHAR = "\u200B"
         private const val PATREON_URL = "https://www.patreon.com/axvin"
         private const val KOFI_URL = "https://ko-fi.com/axvin"
 
-        // Composite USB/Bluetooth HID Report Descriptor:
-        // ID 1 = Keyboard, ID 2 = Mouse, ID 3 = Consumer/Media, ID 4 = Gamepad, ID 5 = System Power
+        // Composite USB/Bluetooth HID Report Descriptor (IDs 1..5)
         private val HID_REPORT_DESCRIPTOR = byteArrayOf(
             // ================= 1. KEYBOARD (Report ID 1) =================
             0x05.toByte(), 0x01.toByte(), // Usage Page (Generic Desktop)
             0x09.toByte(), 0x06.toByte(), // Usage (Keyboard)
             0xA1.toByte(), 0x01.toByte(), // Collection (Application)
-            0x85.toByte(), REPORT_ID_KEYBOARD.toByte(), // Report ID (1)
+            0x85.toByte(), REPORT_ID_KEYBOARD.toByte(),
             0x05.toByte(), 0x07.toByte(), // Usage Page (Key Codes)
-            0x19.toByte(), 0xE0.toByte(), // Usage Minimum (224 - Left Ctrl)
-            0x29.toByte(), 0xE7.toByte(), // Usage Maximum (231 - Right GUI)
+            0x19.toByte(), 0xE0.toByte(), // Usage Minimum (224)
+            0x29.toByte(), 0xE7.toByte(), // Usage Maximum (231)
             0x15.toByte(), 0x00.toByte(), // Logical Minimum (0)
             0x25.toByte(), 0x01.toByte(), // Logical Maximum (1)
             0x75.toByte(), 0x01.toByte(), // Report Size (1)
             0x95.toByte(), 0x08.toByte(), // Report Count (8)
-            0x81.toByte(), 0x02.toByte(), // Input (Data, Variable, Absolute) - Modifier byte
+            0x81.toByte(), 0x02.toByte(), // Input (Modifier byte)
             0x95.toByte(), 0x01.toByte(), // Report Count (1)
             0x75.toByte(), 0x08.toByte(), // Report Size (8)
-            0x81.toByte(), 0x01.toByte(), // Input (Constant) - Reserved byte
+            0x81.toByte(), 0x01.toByte(), // Input (Reserved byte)
             0x95.toByte(), 0x06.toByte(), // Report Count (6)
             0x75.toByte(), 0x08.toByte(), // Report Size (8)
             0x15.toByte(), 0x00.toByte(), // Logical Minimum (0)
@@ -128,27 +135,27 @@ class MainActivity : Activity(), SensorEventListener {
             0x05.toByte(), 0x07.toByte(), // Usage Page (Key Codes)
             0x19.toByte(), 0x00.toByte(), // Usage Minimum (0)
             0x29.toByte(), 0x73.toByte(), // Usage Maximum (115)
-            0x81.toByte(), 0x00.toByte(), // Input (Data, Array) - 6 Key Rollover
-            0xC0.toByte(),                // End Collection
+            0x81.toByte(), 0x00.toByte(), // Input (6 Key Rollover)
+            0xC0.toByte(),
 
-            // ================= 2. MOUSE (Report ID 2) =================
+            // ================= 2. MOUSE (Report ID 2: Buttons, X, Y, Wheel, AC Pan) =================
             0x05.toByte(), 0x01.toByte(), // Usage Page (Generic Desktop)
             0x09.toByte(), 0x02.toByte(), // Usage (Mouse)
             0xA1.toByte(), 0x01.toByte(), // Collection (Application)
-            0x85.toByte(), REPORT_ID_MOUSE.toByte(), // Report ID (2)
+            0x85.toByte(), REPORT_ID_MOUSE.toByte(),
             0x09.toByte(), 0x01.toByte(), // Usage (Pointer)
             0xA1.toByte(), 0x00.toByte(), // Collection (Physical)
             0x05.toByte(), 0x09.toByte(), // Usage Page (Buttons)
-            0x19.toByte(), 0x01.toByte(), // Usage Minimum (Button 1 - Left)
-            0x29.toByte(), 0x03.toByte(), // Usage Maximum (Button 3 - Middle)
+            0x19.toByte(), 0x01.toByte(), // Usage Minimum (Button 1)
+            0x29.toByte(), 0x03.toByte(), // Usage Maximum (Button 3)
             0x15.toByte(), 0x00.toByte(), // Logical Minimum (0)
             0x25.toByte(), 0x01.toByte(), // Logical Maximum (1)
             0x95.toByte(), 0x03.toByte(), // Report Count (3)
             0x75.toByte(), 0x01.toByte(), // Report Size (1)
-            0x81.toByte(), 0x02.toByte(), // Input (Data, Variable, Absolute) - 3 buttons
+            0x81.toByte(), 0x02.toByte(), // Input (3 buttons)
             0x95.toByte(), 0x01.toByte(), // Report Count (1)
             0x75.toByte(), 0x05.toByte(), // Report Size (5)
-            0x81.toByte(), 0x01.toByte(), // Input (Constant) - 5 bit padding
+            0x81.toByte(), 0x01.toByte(), // Input (5 bit padding)
             0x05.toByte(), 0x01.toByte(), // Usage Page (Generic Desktop)
             0x09.toByte(), 0x30.toByte(), // Usage (X)
             0x09.toByte(), 0x31.toByte(), // Usage (Y)
@@ -157,85 +164,85 @@ class MainActivity : Activity(), SensorEventListener {
             0x25.toByte(), 0x7F.toByte(), // Logical Maximum (127)
             0x75.toByte(), 0x08.toByte(), // Report Size (8)
             0x95.toByte(), 0x03.toByte(), // Report Count (3)
-            0x81.toByte(), 0x06.toByte(), // Input (Data, Variable, Relative) - X, Y, Wheel
-            0xC0.toByte(),                // End Collection (Physical)
-            0xC0.toByte(),                // End Collection (Application)
+            0x81.toByte(), 0x06.toByte(), // Input (X, Y, Wheel)
+            0x05.toByte(), 0x0C.toByte(), // Usage Page (Consumer)
+            0x0A.toByte(), 0x38.toByte(), 0x02.toByte(), // Usage (AC Pan - Horizontal Scroll)
+            0x15.toByte(), 0x81.toByte(), // Logical Minimum (-127)
+            0x25.toByte(), 0x7F.toByte(), // Logical Maximum (127)
+            0x75.toByte(), 0x08.toByte(), // Report Size (8)
+            0x95.toByte(), 0x01.toByte(), // Report Count (1)
+            0x81.toByte(), 0x06.toByte(), // Input (Horizontal Wheel)
+            0xC0.toByte(),
+            0xC0.toByte(),
 
             // ================= 3. CONSUMER MEDIA & TV CONTROL (Report ID 3) =================
             0x05.toByte(), 0x0C.toByte(), // Usage Page (Consumer)
             0x09.toByte(), 0x01.toByte(), // Usage (Consumer Control)
             0xA1.toByte(), 0x01.toByte(), // Collection (Application)
-            0x85.toByte(), REPORT_ID_CONSUMER.toByte(), // Report ID (3)
-            0x19.toByte(), 0x00.toByte(), // Usage Minimum (0)
-            0x2A.toByte(), 0xFF.toByte(), 0x03.toByte(), // Usage Maximum (0x03FF)
-            0x15.toByte(), 0x00.toByte(), // Logical Minimum (0)
-            0x26.toByte(), 0xFF.toByte(), 0x03.toByte(), // Logical Maximum (0x03FF)
-            0x95.toByte(), 0x01.toByte(), // Report Count (1)
-            0x75.toByte(), 0x10.toByte(), // Report Size (16)
-            0x81.toByte(), 0x00.toByte(), // Input (Data, Array, Absolute)
-            0xC0.toByte(),                // End Collection
+            0x85.toByte(), REPORT_ID_CONSUMER.toByte(),
+            0x19.toByte(), 0x00.toByte(),
+            0x2A.toByte(), 0xFF.toByte(), 0x03.toByte(),
+            0x15.toByte(), 0x00.toByte(),
+            0x26.toByte(), 0xFF.toByte(), 0x03.toByte(),
+            0x95.toByte(), 0x01.toByte(),
+            0x75.toByte(), 0x10.toByte(),
+            0x81.toByte(), 0x00.toByte(),
+            0xC0.toByte(),
 
             // ================= 4. GAMEPAD CONTROLLER (Report ID 4) =================
             0x05.toByte(), 0x01.toByte(), // Usage Page (Generic Desktop)
             0x09.toByte(), 0x05.toByte(), // Usage (Game Pad)
             0xA1.toByte(), 0x01.toByte(), // Collection (Application)
-            0x85.toByte(), REPORT_ID_GAMEPAD.toByte(), // Report ID (4)
-            // 16 Buttons (2 bytes)
+            0x85.toByte(), REPORT_ID_GAMEPAD.toByte(),
             0x05.toByte(), 0x09.toByte(), // Usage Page (Button)
-            0x19.toByte(), 0x01.toByte(), // Usage Minimum (Button 1)
-            0x29.toByte(), 0x10.toByte(), // Usage Maximum (Button 16)
-            0x15.toByte(), 0x00.toByte(), // Logical Minimum (0)
-            0x25.toByte(), 0x01.toByte(), // Logical Maximum (1)
-            0x75.toByte(), 0x01.toByte(), // Report Size (1)
-            0x95.toByte(), 0x10.toByte(), // Report Count (16)
-            0x81.toByte(), 0x02.toByte(), // Input (Data, Variable, Absolute)
-            // 8-Way Hat Switch D-Pad (1 byte: 0..7 active, 8 = released/null)
-            0x05.toByte(), 0x01.toByte(), // Usage Page (Generic Desktop)
-            0x09.toByte(), 0x39.toByte(), // Usage (Hat switch)
-            0x15.toByte(), 0x00.toByte(), // Logical Minimum (0)
-            0x25.toByte(), 0x07.toByte(), // Logical Maximum (7)
-            0x35.toByte(), 0x00.toByte(), // Physical Minimum (0)
-            0x46.toByte(), 0x3B.toByte(), 0x01.toByte(), // Physical Maximum (315)
-            0x65.toByte(), 0x14.toByte(), // Unit (Eng Rot: Angular Pos)
-            0x75.toByte(), 0x08.toByte(), // Report Size (8)
-            0x95.toByte(), 0x01.toByte(), // Report Count (1)
-            0x81.toByte(), 0x42.toByte(), // Input (Data, Variable, Absolute, Null State)
-            // 4 Analog Thumbstick Axes: X, Y, Z, Rz (4 signed bytes: -127..127)
-            0x05.toByte(), 0x01.toByte(), // Usage Page (Generic Desktop)
-            0x09.toByte(), 0x30.toByte(), // Usage (X - Left Stick X)
-            0x09.toByte(), 0x31.toByte(), // Usage (Y - Left Stick Y)
-            0x09.toByte(), 0x32.toByte(), // Usage (Z - Right Stick X)
-            0x09.toByte(), 0x35.toByte(), // Usage (Rz - Right Stick Y)
-            0x15.toByte(), 0x81.toByte(), // Logical Minimum (-127)
-            0x25.toByte(), 0x7F.toByte(), // Logical Maximum (127)
-            0x75.toByte(), 0x08.toByte(), // Report Size (8)
-            0x95.toByte(), 0x04.toByte(), // Report Count (4)
-            0x81.toByte(), 0x02.toByte(), // Input (Data, Variable, Absolute)
-            0xC0.toByte(),                // End Collection
+            0x19.toByte(), 0x01.toByte(),
+            0x29.toByte(), 0x10.toByte(),
+            0x15.toByte(), 0x00.toByte(),
+            0x25.toByte(), 0x01.toByte(),
+            0x75.toByte(), 0x01.toByte(),
+            0x95.toByte(), 0x10.toByte(),
+            0x81.toByte(), 0x02.toByte(),
+            0x05.toByte(), 0x01.toByte(), // Hat Switch
+            0x09.toByte(), 0x39.toByte(),
+            0x15.toByte(), 0x00.toByte(),
+            0x25.toByte(), 0x07.toByte(),
+            0x35.toByte(), 0x00.toByte(),
+            0x46.toByte(), 0x3B.toByte(), 0x01.toByte(),
+            0x65.toByte(), 0x14.toByte(),
+            0x75.toByte(), 0x08.toByte(),
+            0x95.toByte(), 0x01.toByte(),
+            0x81.toByte(), 0x42.toByte(),
+            0x05.toByte(), 0x01.toByte(), // 4 Thumbstick Axes (X, Y, Z, Rz)
+            0x09.toByte(), 0x30.toByte(),
+            0x09.toByte(), 0x31.toByte(),
+            0x09.toByte(), 0x32.toByte(),
+            0x09.toByte(), 0x35.toByte(),
+            0x15.toByte(), 0x81.toByte(),
+            0x25.toByte(), 0x7F.toByte(),
+            0x75.toByte(), 0x08.toByte(),
+            0x95.toByte(), 0x04.toByte(),
+            0x81.toByte(), 0x02.toByte(),
+            0xC0.toByte(),
 
             // ================= 5. SYSTEM POWER CONTROL (Report ID 5) =================
             0x05.toByte(), 0x01.toByte(), // Usage Page (Generic Desktop)
             0x09.toByte(), 0x80.toByte(), // Usage (System Control)
-            0xA1.toByte(), 0x01.toByte(), // Collection (Application)
-            0x85.toByte(), REPORT_ID_SYSTEM.toByte(), // Report ID (5)
-            0x19.toByte(), 0x81.toByte(), // Usage Minimum (0x81 - System Power Down)
-            0x29.toByte(), 0x83.toByte(), // Usage Maximum (0x83 - System Wake Up)
-            0x15.toByte(), 0x00.toByte(), // Logical Minimum (0)
-            0x25.toByte(), 0x01.toByte(), // Logical Maximum (1)
-            0x75.toByte(), 0x01.toByte(), // Report Size (1)
-            0x95.toByte(), 0x03.toByte(), // Report Count (3)
-            0x81.toByte(), 0x02.toByte(), // Input (Data, Variable, Absolute)
-            0x95.toByte(), 0x01.toByte(), // Report Count (1)
-            0x75.toByte(), 0x05.toByte(), // Report Size (5)
-            0x81.toByte(), 0x01.toByte(), // Input (Constant - 5 bit padding)
-            0xC0.toByte()                 // End Collection
+            0xA1.toByte(), 0x01.toByte(),
+            0x85.toByte(), REPORT_ID_SYSTEM.toByte(),
+            0x19.toByte(), 0x81.toByte(),
+            0x29.toByte(), 0x83.toByte(),
+            0x15.toByte(), 0x00.toByte(),
+            0x25.toByte(), 0x01.toByte(),
+            0x75.toByte(), 0x01.toByte(),
+            0x95.toByte(), 0x03.toByte(),
+            0x81.toByte(), 0x02.toByte(),
+            0x95.toByte(), 0x01.toByte(),
+            0x75.toByte(), 0x05.toByte(),
+            0x81.toByte(), 0x01.toByte(),
+            0xC0.toByte()
         )
     }
 
-    /**
-     * ScrollView with Scroll-Lock support so trackpad, rotary dials, and joysticks
-     * never cause the screen to move up and down during touch interaction.
-     */
     private class LockableScrollView(context: Context) : ScrollView(context) {
         var isScrollLocked: Boolean = false
 
@@ -254,6 +261,16 @@ class MainActivity : Activity(), SensorEventListener {
         XBOX_360, PS5_DUALSENSE, MOBILE_PRO
     }
 
+    // Settings state (persisted in SharedPreferences)
+    private lateinit var prefs: SharedPreferences
+    private var prefTwoFingerVertScroll = true
+    private var prefTwoFingerHorizScroll = true
+    private var prefTwoFingerTapRightClick = true
+    private var prefPinchToZoom = true
+    private var prefThreeFingerSwipeNav = true
+    private var prefVolumeButtonsAsMouse = true
+    private var prefInvertVolumeButtons = false
+
     // Bluetooth HID state
     private var bluetoothAdapter: BluetoothAdapter? = null
     private var hidDevice: BluetoothHidDevice? = null
@@ -261,6 +278,7 @@ class MainActivity : Activity(), SensorEventListener {
     private var pairedDevicesList = mutableListOf<BluetoothDevice>()
     private val hidExecutor = Executors.newSingleThreadExecutor()
     private var isUserSelectingDevice = false
+    private var isConnectionCardExpanded = true
 
     // Sensor state
     private lateinit var sensorManager: SensorManager
@@ -272,24 +290,43 @@ class MainActivity : Activity(), SensorEventListener {
     private var gyroSensitivity = 22.0f
     private var residualX = 0.0f
     private var residualY = 0.0f
-
-    // Accelerometer baseline
     private var accelBaseX = 0.0f
     private var accelBaseY = 0.0f
     private var accelCalibrated = false
 
-    // Mouse state
+    // Mouse & Multi-Finger Gesture state
     private var activeMouseButtons = 0
-    private var lastTouchX = 0f
-    private var lastTouchY = 0f
-    private var touchDownTime = 0L
-    private var touchMovedDistance = 0f
+    private var maxPointersInGesture = 0
+    private var gestureStartTime = 0L
+    private var lastSingleX = 0f
+    private var lastSingleY = 0f
+    private var singleMovedDist = 0f
+    private var lastTwoCenterX = 0f
+    private var lastTwoCenterY = 0f
+    private var lastPinchSpan = 0f
+    private var twoFingerMovedDist = 0f
+    private var threeStartX = 0f
+    private var threeStartY = 0f
+    private var threeGestureFired = false
     private var lastScrollY = 0f
+
+    // Media & Volume state
+    private var estimatedVolumePercent = 50
+    private var isVolumeMuted = false
+    private var seekWheelUseArrowKeys = true // Default true for universal TV streaming app compatibility
+    private var volumeDialViewRef: View? = null
+    private var muteButtonRef: Button? = null
+
+    // Full Landscape Keyboard Sticky Modifier state
+    private var stickyModifiersMask = 0 // Bitmask of MOD_LEFT_CTRL, MOD_LEFT_SHIFT, MOD_LEFT_ALT, MOD_LEFT_GUI
+    private var isCapsLocked = false
+    private val modifierButtonsMap = mutableMapOf<Int, Button>()
+    private var capsButtonRef: Button? = null
 
     // Gamepad state
     private var currentGamepadStyle = GamepadStyle.XBOX_360
     private var gamepadButtonMask = 0
-    private var gamepadHatState = 8 // 8 = null/centered, 0=N, 2=E, 4=S, 6=W
+    private var gamepadHatState = 8
     private var leftStickX = 0
     private var leftStickY = 0
     private var rightStickX = 0
@@ -300,7 +337,9 @@ class MainActivity : Activity(), SensorEventListener {
 
     // UI Elements
     private lateinit var rootScrollView: LockableScrollView
-    private lateinit var statusBadge: TextView
+    private lateinit var connectionHeaderStatus: TextView
+    private lateinit var connectionCollapseArrow: TextView
+    private lateinit var connectionBodyLayout: LinearLayout
     private lateinit var deviceSpinner: Spinner
     private lateinit var deviceAdapter: ArrayAdapter<String>
     private lateinit var quickSwitchRow: LinearLayout
@@ -308,8 +347,11 @@ class MainActivity : Activity(), SensorEventListener {
     private lateinit var liveKeyboardInput: EditText
     private lateinit var airTriggerBtn: Button
 
-    // Tab Containers & Buttons
-    private val tabButtons = mutableListOf<Button>()
+    // Tabs
+    private var currentTabIndex = 0
+    private val tabItemLayouts = mutableListOf<LinearLayout>()
+    private val tabTitleViews = mutableListOf<TextView>()
+    private val tabIndicatorBars = mutableListOf<View>()
     private val tabSections = mutableListOf<View>()
     private lateinit var gamepadContentContainer: LinearLayout
 
@@ -318,6 +360,9 @@ class MainActivity : Activity(), SensorEventListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        loadSettings()
 
         vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -329,6 +374,11 @@ class MainActivity : Activity(), SensorEventListener {
 
         buildUserInterface()
         checkAndRequestPermissions()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // Preserve connection & active tab seamlessly across portrait/landscape transitions
     }
 
     override fun onResume() {
@@ -354,88 +404,106 @@ class MainActivity : Activity(), SensorEventListener {
         }
     }
 
+    private fun loadSettings() {
+        prefTwoFingerVertScroll = prefs.getBoolean("two_vert_scroll", true)
+        prefTwoFingerHorizScroll = prefs.getBoolean("two_horiz_scroll", true)
+        prefTwoFingerTapRightClick = prefs.getBoolean("two_tap_right", true)
+        prefPinchToZoom = prefs.getBoolean("pinch_zoom", true)
+        prefThreeFingerSwipeNav = prefs.getBoolean("three_swipe_nav", true)
+        prefVolumeButtonsAsMouse = prefs.getBoolean("vol_btns_mouse", true)
+        prefInvertVolumeButtons = prefs.getBoolean("invert_vol_btns", false)
+    }
+
+    private fun saveSettings() {
+        prefs.edit()
+            .putBoolean("two_vert_scroll", prefTwoFingerVertScroll)
+            .putBoolean("two_horiz_scroll", prefTwoFingerHorizScroll)
+            .putBoolean("two_tap_right", prefTwoFingerTapRightClick)
+            .putBoolean("pinch_zoom", prefPinchToZoom)
+            .putBoolean("three_swipe_nav", prefThreeFingerSwipeNav)
+            .putBoolean("vol_btns_mouse", prefVolumeButtonsAsMouse)
+            .putBoolean("invert_vol_btns", prefInvertVolumeButtons)
+            .apply()
+    }
+
     // =========================================================================
-    // UI CONSTRUCTION (TOP CONNECTION BAR + 4 TABS + PATREON/KO-FI FOOTER)
+    // UI CONSTRUCTION (COLLAPSIBLE CONNECTION TAB + SETTINGS + 5 TABS)
     // =========================================================================
 
     private fun buildUserInterface() {
         rootScrollView = LockableScrollView(this).apply {
-            setBackgroundColor(Color.parseColor("#0F172A"))
+            setBackgroundColor(Color.parseColor("#0B1120"))
             isFillViewport = true
         }
 
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(24))
+            setPadding(dp(10), dp(8), dp(10), dp(18))
         }
 
-        // 1. Header Bar: Logo + "Air Mouse" + "by AXVin" + Connection Status
-        val headerRow = LinearLayout(this).apply {
+        // 1. Top Bar: Collapsible Connection Card + Settings Gear Button
+        val topBarRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = roundedBox("#1E293B", dp(12), "#334155")
-            setPadding(dp(12), dp(10), dp(12), dp(10))
         }
 
-        val logoView = createLogoView().apply {
-            layoutParams = LinearLayout.LayoutParams(dp(50), dp(50)).apply {
-                marginEnd = dp(12)
+        val connHeaderToggle = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = roundedBox("#1E293B", dp(10), "#334155")
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            layoutParams = LinearLayout.LayoutParams(0, dp(42), 1f)
+            setOnClickListener {
+                hapticTick()
+                setConnectionCardExpanded(!isConnectionCardExpanded)
             }
         }
-        headerRow.addView(logoView)
 
-        val titleCol = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        connectionHeaderStatus = TextView(this).apply {
+            text = "🔵 Connection: Initializing HID..."
+            setTextColor(Color.parseColor("#38BDF8"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            typeface = Typeface.DEFAULT_BOLD
+            isSingleLine = true
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
+        connHeaderToggle.addView(connectionHeaderStatus)
 
-        val titleRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-
-        val titleText = TextView(this).apply {
-            text = "Air Mouse"
-            setTextColor(Color.parseColor("#F8FAFC"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+        connectionCollapseArrow = TextView(this).apply {
+            text = "▲ Hide"
+            setTextColor(Color.parseColor("#94A3B8"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
             typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(8), 0, 0, 0)
         }
-        titleRow.addView(titleText)
+        connHeaderToggle.addView(connectionCollapseArrow)
+        topBarRow.addView(connHeaderToggle)
 
-        val creatorBadge = TextView(this).apply {
-            text = "by AXVin"
-            setTextColor(Color.parseColor("#38BDF8"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
-            typeface = Typeface.DEFAULT_BOLD
-            background = roundedBox("#0F172A", dp(6), "#0284C7")
-            setPadding(dp(8), dp(2), dp(8), dp(2))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { marginStart = dp(8) }
+        val settingsBtn = Button(this).apply {
+            text = "⚙️"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            background = roundedBox("#1E293B", dp(10), "#38BDF8")
+            layoutParams = LinearLayout.LayoutParams(dp(44), dp(42)).apply {
+                marginStart = dp(6)
+            }
+            setOnClickListener {
+                hapticTick()
+                showSettingsDialog()
+            }
         }
-        titleRow.addView(creatorBadge)
-        titleCol.addView(titleRow)
+        topBarRow.addView(settingsBtn)
+        container.addView(topBarRow)
 
-        statusBadge = TextView(this).apply {
-            text = "Status: Initializing Bluetooth HID..."
-            setTextColor(Color.parseColor("#38BDF8"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setPadding(0, dp(3), 0, 0)
-        }
-        titleCol.addView(statusBadge)
-        headerRow.addView(titleCol)
-        container.addView(headerRow)
-
-        // 2. Bluetooth Device Bar (High-Contrast Dropdown + Instant Switch + Reset + Unpair + Pair New)
-        val btCard = LinearLayout(this).apply {
+        // Collapsible Connection Body
+        connectionBodyLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = roundedBox("#1E293B", dp(12), "#334155")
+            background = roundedBox("#1E293B", dp(10), "#334155")
             setPadding(dp(10), dp(8), dp(10), dp(8))
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(8) }
+            ).apply { topMargin = dp(4) }
         }
 
         val spinnerRow = LinearLayout(this).apply {
@@ -443,7 +511,6 @@ class MainActivity : Activity(), SensorEventListener {
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        // Custom high-contrast ArrayAdapter so selected & dropdown items are always visible on ALL phones
         deviceAdapter = object : ArrayAdapter<String>(
             this,
             android.R.layout.simple_spinner_item,
@@ -451,9 +518,9 @@ class MainActivity : Activity(), SensorEventListener {
         ) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val tv = (super.getView(position, convertView, parent) as TextView)
-                tv.setTextColor(Color.parseColor("#F8FAFC")) // Bright white text for selected item
+                tv.setTextColor(Color.parseColor("#F8FAFC"))
                 tv.setBackgroundColor(Color.TRANSPARENT)
-                tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+                tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 tv.typeface = Typeface.DEFAULT_BOLD
                 tv.setPadding(dp(8), dp(6), dp(8), dp(6))
                 tv.isSingleLine = true
@@ -462,10 +529,10 @@ class MainActivity : Activity(), SensorEventListener {
 
             override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val tv = (super.getDropDownView(position, convertView, parent) as TextView)
-                tv.setTextColor(Color.parseColor("#F8FAFC")) // Bright white text in dropdown popup
-                tv.setBackgroundColor(Color.parseColor("#0F172A")) // Dark navy background in popup
-                tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                tv.setPadding(dp(14), dp(12), dp(14), dp(12))
+                tv.setTextColor(Color.parseColor("#F8FAFC"))
+                tv.setBackgroundColor(Color.parseColor("#0F172A"))
+                tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+                tv.setPadding(dp(14), dp(11), dp(14), dp(11))
                 return tv
             }
         }
@@ -473,7 +540,7 @@ class MainActivity : Activity(), SensorEventListener {
         deviceSpinner = Spinner(this).apply {
             adapter = deviceAdapter
             background = roundedBox("#0F172A", dp(8), "#475569")
-            layoutParams = LinearLayout.LayoutParams(0, dp(42), 1f)
+            layoutParams = LinearLayout.LayoutParams(0, dp(38), 1f)
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                     if (isUserSelectingDevice && position in pairedDevicesList.indices) {
@@ -494,14 +561,13 @@ class MainActivity : Activity(), SensorEventListener {
                 Toast.makeText(this, "Pair your TV first using 'Pair New'", Toast.LENGTH_SHORT).show()
             }
         }.apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(40)).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(38)).apply {
                 marginStart = dp(6)
             }
         }
         spinnerRow.addView(connectBtn)
-        btCard.addView(spinnerRow)
+        connectionBodyLayout.addView(spinnerRow)
 
-        // Action Buttons Row: Reset Connection | Unpair Device | Pair New | Refresh
         val btActionsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
@@ -510,15 +576,9 @@ class MainActivity : Activity(), SensorEventListener {
             ).apply { topMargin = dp(6) }
         }
 
-        val resetBtn = createStyledButton("Reset Conn", "#D97706") {
-            resetHidConnection()
-        }.apply { layoutParams = weightParams(dp(36)) }
-
-        val unpairBtn = createStyledButton("Unpair", "#DC2626") {
-            unpairCurrentDevice()
-        }.apply { layoutParams = weightParams(dp(36)) }
-
-        val pairNewBtn = createStyledButton("Pair New", "#334155") {
+        btActionsRow.addView(createStyledButton("Reset Conn", "#D97706") { resetHidConnection() }.apply { layoutParams = weightParams(dp(34)) })
+        btActionsRow.addView(createStyledButton("Unpair", "#DC2626") { unpairCurrentDevice() }.apply { layoutParams = weightParams(dp(34)) })
+        btActionsRow.addView(createStyledButton("Pair New", "#334155") {
             try {
                 startActivity(Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
                     putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300)
@@ -526,20 +586,13 @@ class MainActivity : Activity(), SensorEventListener {
             } catch (_: Exception) {
                 startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS))
             }
-        }.apply { layoutParams = weightParams(dp(36)) }
-
-        val refreshBtn = createStyledButton("Refresh", "#334155") {
+        }.apply { layoutParams = weightParams(dp(34)) })
+        btActionsRow.addView(createStyledButton("Refresh", "#334155") {
             refreshPairedDevices()
             Toast.makeText(this, "Device list refreshed", Toast.LENGTH_SHORT).show()
-        }.apply { layoutParams = weightParams(dp(36)) }
+        }.apply { layoutParams = weightParams(dp(34)) })
+        connectionBodyLayout.addView(btActionsRow)
 
-        btActionsRow.addView(resetBtn)
-        btActionsRow.addView(unpairBtn)
-        btActionsRow.addView(pairNewBtn)
-        btActionsRow.addView(refreshBtn)
-        btCard.addView(btActionsRow)
-
-        // Instant One-Tap Device Switcher Bar
         val quickSwitchScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             layoutParams = LinearLayout.LayoutParams(
@@ -552,43 +605,39 @@ class MainActivity : Activity(), SensorEventListener {
             gravity = Gravity.CENTER_VERTICAL
         }
         quickSwitchScroll.addView(quickSwitchRow)
-        btCard.addView(quickSwitchScroll)
+        connectionBodyLayout.addView(quickSwitchScroll)
+        container.addView(connectionBodyLayout)
 
-        container.addView(btCard)
-
-        // 3. Top Navigation Tabs ("Air Mouse & Keyboard", "Media and TV", "GamePad", "System Power")
-        val tabsScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
+        // 2. High-Visibility 5-Tab Segmented Switcher Bar:
+        // ("Air Mouse", "Keyboard", "Media", "Gamepad", "System Power")
+        val tabsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = roundedBox("#1E293B", dp(12), "#475569")
+            setPadding(dp(4), dp(4), dp(4), dp(4))
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(10) }
+            ).apply { topMargin = dp(8) }
         }
 
-        val tabsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            background = roundedBox("#1E293B", dp(10))
-            setPadding(dp(4), dp(4), dp(4), dp(4))
-        }
-
-        val tabTitles = listOf(
-            "Air Mouse & Keyboard",
-            "Media and TV",
-            "GamePad",
-            "System Power"
+        val tabSpecs = listOf(
+            "🖱️" to "Air Mouse",
+            "⌨️" to "Keyboard",
+            "📺" to "Media",
+            "🎮" to "Gamepad",
+            "⚡" to "System Power"
         )
 
-        tabButtons.clear()
-        tabTitles.forEachIndexed { index, title ->
-            val btn = Button(this).apply {
-                text = title
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                typeface = Typeface.DEFAULT_BOLD
-                setPadding(dp(14), dp(6), dp(14), dp(6))
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    dp(38)
-                ).apply {
+        tabItemLayouts.clear()
+        tabTitleViews.clear()
+        tabIndicatorBars.clear()
+
+        tabSpecs.forEachIndexed { index, (icon, label) ->
+            val tabCell = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(dp(2), dp(5), dp(2), dp(3))
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
                     marginStart = dp(2)
                     marginEnd = dp(2)
                 }
@@ -597,103 +646,245 @@ class MainActivity : Activity(), SensorEventListener {
                     selectTab(index)
                 }
             }
-            tabButtons.add(btn)
-            tabsRow.addView(btn)
+
+            val iconAndText = TextView(this).apply {
+                text = "$icon\n$label"
+                gravity = Gravity.CENTER
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+                typeface = Typeface.DEFAULT_BOLD
+                setLines(2)
+            }
+            tabCell.addView(iconAndText)
+
+            val bottomIndicator = View(this).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(28), dp(3)).apply {
+                    topMargin = dp(3)
+                }
+            }
+            tabCell.addView(bottomIndicator)
+
+            tabItemLayouts.add(tabCell)
+            tabTitleViews.add(iconAndText)
+            tabIndicatorBars.add(bottomIndicator)
+            tabsRow.addView(tabCell)
         }
-        tabsScroll.addView(tabsRow)
-        container.addView(tabsScroll)
+        container.addView(tabsRow)
 
-        // 4. Build All 4 Tab Content Views
+        // 3. Build All 5 Tab Content Views
         tabSections.clear()
-        val tab1 = buildAirMouseAndKeyboardTab()
-        val tab2 = buildMediaAndTvTab()
-        val tab3 = buildGamepadTab()
-        val tab4 = buildSystemPowerTab()
+        val tabAirMouse = buildAirMouseTab()
+        val tabFullKeyboard = buildFullLandscapeKeyboardTab()
+        val tabMedia = buildMediaTab()
+        val tabGamepad = buildLandscapeGamepadTab()
+        val tabSystemPower = buildSystemPowerTab()
 
-        tabSections.addAll(listOf(tab1, tab2, tab3, tab4))
+        tabSections.addAll(listOf(tabAirMouse, tabFullKeyboard, tabMedia, tabGamepad, tabSystemPower))
         tabSections.forEach { container.addView(it) }
 
-        selectTab(0)
-
-        // 5. Creator Support Card (Patreon & Ko-fi links for AXVin)
-        val supportCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = roundedBox("#1E293B", dp(12), "#334155")
-            setPadding(dp(12), dp(10), dp(12), dp(10))
+        // 4. Support Creator Row (Patreon & Ko-fi links)
+        val supportRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(14) }
+            ).apply { topMargin = dp(12) }
         }
 
-        val supportTitle = TextView(this).apply {
-            text = "Created by AXVin • Support Development"
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#E2E8F0"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-            typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 0, dp(8))
-        }
-        supportCard.addView(supportTitle)
-
-        val supportBtnsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-
-        val patreonBtn = createStyledButton("Support me on Patreon", "#F96854") {
+        val patreonBtn = createStyledButton("Support AXVin on Patreon", "#F96854") {
             openExternalUrl(PATREON_URL)
         }.apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(42), 1f).apply { marginEnd = dp(6) }
+            layoutParams = LinearLayout.LayoutParams(0, dp(38), 1f).apply { marginEnd = dp(5) }
         }
 
         val kofiBtn = createStyledButton("Buy me a Ko-fi ☕", "#29ABE0") {
             openExternalUrl(KOFI_URL)
         }.apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(42), 1f).apply { marginStart = dp(6) }
+            layoutParams = LinearLayout.LayoutParams(0, dp(38), 1f).apply { marginStart = dp(5) }
         }
 
-        supportBtnsRow.addView(patreonBtn)
-        supportBtnsRow.addView(kofiBtn)
-        supportCard.addView(supportBtnsRow)
+        supportRow.addView(patreonBtn)
+        supportRow.addView(kofiBtn)
+        container.addView(supportRow)
 
-        container.addView(supportCard)
         rootScrollView.addView(container)
         setContentView(rootScrollView)
+
+        selectTab(0)
+    }
+
+    private fun setConnectionCardExpanded(expanded: Boolean) {
+        isConnectionCardExpanded = expanded
+        connectionBodyLayout.visibility = if (expanded) View.VISIBLE else View.GONE
+        connectionCollapseArrow.text = if (expanded) "▲ Hide" else "▼ Devices"
     }
 
     private fun selectTab(selectedIndex: Int) {
-        tabButtons.forEachIndexed { idx, btn ->
-            if (idx == selectedIndex) {
-                btn.background = roundedBox("#0284C7", dp(8))
-                btn.setTextColor(Color.WHITE)
+        currentTabIndex = selectedIndex
+
+        // Switch screen orientation automatically:
+        // Tabs 1 ("Keyboard") and 3 ("Gamepad") use Landscape; others use Portrait.
+        requestedOrientation = if (selectedIndex == 1 || selectedIndex == 3) {
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+
+        tabItemLayouts.forEachIndexed { idx, cell ->
+            val isSelected = idx == selectedIndex
+            if (isSelected) {
+                cell.background = roundedBox("#0284C7", dp(9), "#38BDF8")
+                tabTitleViews[idx].setTextColor(Color.WHITE)
+                tabIndicatorBars[idx].background = roundedBox("#38BDF8", dp(2))
             } else {
-                btn.background = roundedBox("#1E293B", dp(8))
-                btn.setTextColor(Color.parseColor("#94A3B8"))
+                cell.background = roundedBox("#0F172A", dp(9), "#334155")
+                tabTitleViews[idx].setTextColor(Color.parseColor("#94A3B8"))
+                tabIndicatorBars[idx].background = roundedBox("#00000000", dp(2))
             }
         }
+
         tabSections.forEachIndexed { idx, section ->
             section.visibility = if (idx == selectedIndex) View.VISIBLE else View.GONE
         }
     }
 
     // =========================================================================
-    // TAB 1: AIR MOUSE & KEYBOARD
+    // SETTINGS DIALOG (GESTURE TOGGLES & VOLUME BUTTON CLICK SETTINGS)
     // =========================================================================
 
-    private fun buildAirMouseAndKeyboardTab(): View {
+    private fun showSettingsDialog() {
+        val scroll = ScrollView(this)
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#0F172A"))
+            setPadding(dp(18), dp(14), dp(18), dp(10))
+        }
+
+        fun addSectionHeader(title: String) {
+            val tv = TextView(this).apply {
+                text = title
+                setTextColor(Color.parseColor("#38BDF8"))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+                typeface = Typeface.DEFAULT_BOLD
+                setPadding(0, dp(8), 0, dp(4))
+            }
+            layout.addView(tv)
+        }
+
+        fun addToggle(label: String, initial: Boolean, onChanged: (Boolean) -> Unit) {
+            val cb = CheckBox(this).apply {
+                text = label
+                isChecked = initial
+                setTextColor(Color.parseColor("#F8FAFC"))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setPadding(dp(6), dp(6), dp(6), dp(6))
+                setOnCheckedChangeListener { _, checked ->
+                    onChanged(checked)
+                    saveSettings()
+                }
+            }
+            layout.addView(cb)
+        }
+
+        addSectionHeader("Trackpad Multi-Finger Gestures")
+        addToggle("2-Finger Vertical Scroll", prefTwoFingerVertScroll) { prefTwoFingerVertScroll = it }
+        addToggle("2-Finger Horizontal Scroll", prefTwoFingerHorizScroll) { prefTwoFingerHorizScroll = it }
+        addToggle("2-Finger Tap for Right Click", prefTwoFingerTapRightClick) { prefTwoFingerTapRightClick = it }
+        addToggle("2-Finger Pinch-to-Zoom (Ctrl + Wheel)", prefPinchToZoom) { prefPinchToZoom = it }
+        addToggle("3-Finger Swipe (Back / Forward / Home / Recents)", prefThreeFingerSwipeNav) { prefThreeFingerSwipeNav = it }
+
+        addSectionHeader("Hardware Volume Button Mouse Clicks")
+        addToggle("Use Volume Buttons as Mouse Clicks\n(Vol Up = Left Click, Vol Down = Right Click)", prefVolumeButtonsAsMouse) {
+            prefVolumeButtonsAsMouse = it
+        }
+        addToggle("Invert Volume Click Buttons\n(Vol Up = Right Click, Vol Down = Left Click)", prefInvertVolumeButtons) {
+            prefInvertVolumeButtons = it
+        }
+
+        scroll.addView(layout)
+
+        AlertDialog.Builder(this)
+            .setTitle("Air Mouse Settings")
+            .setView(scroll)
+            .setPositiveButton("Done") { dialog, _ -> dialog.dismiss() }
+            .show()
+    }
+
+    // =========================================================================
+    // TAB 1: AIR MOUSE (ENLARGED MULTI-GESTURE TRACKPAD + GYRO + QUICK KEYBOARD)
+    // =========================================================================
+
+    private fun buildAirMouseTab(): View {
         val tabRoot = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(10) }
+            ).apply { topMargin = dp(8) }
         }
 
-        // Gyro Controls Card
+        // 1. Enlarged Multi-Finger Gesture Trackpad + Scroll Strip (310dp tall)
+        val padRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(310)
+            )
+        }
+
+        touchpadView = TextView(this).apply {
+            text = "MULTI-GESTURE TRACKPAD (SCROLL LOCKED)\n" +
+                "• 1 Finger: Move & Tap (Left Click)\n" +
+                "• 2 Fingers: Tap (Right Click), V/H Scroll & Pinch Zoom\n" +
+                "• 3 Fingers: Swipe Left/Right (Back/Fwd), Up/Down (Apps/Home)"
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor("#94A3B8"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            background = roundedBox("#1E293B", dp(14), "#334155")
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
+            setOnTouchListener { v, event -> handleMultiGestureTouchpad(v, event) }
+        }
+        padRow.addView(touchpadView)
+
+        val scrollStrip = TextView(this).apply {
+            text = "S\nC\nR\nO\nL\nL"
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor("#94A3B8"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            background = roundedBox("#1E293B", dp(14), "#334155")
+            layoutParams = LinearLayout.LayoutParams(dp(44), LinearLayout.LayoutParams.MATCH_PARENT).apply {
+                marginStart = dp(6)
+            }
+            setOnTouchListener { v, event -> handleScrollStripEvent(v, event) }
+        }
+        padRow.addView(scrollStrip)
+        tabRoot.addView(padRow)
+
+        // 2. Mouse Click Buttons Row
+        val mouseBtnsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(46)
+            ).apply { topMargin = dp(8) }
+        }
+        mouseBtnsRow.addView(createHoldMouseButton("LEFT CLICK", 1), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.2f))
+        mouseBtnsRow.addView(createHoldMouseButton("MIDDLE", 4), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 0.8f).apply {
+            marginStart = dp(6)
+            marginEnd = dp(6)
+        })
+        mouseBtnsRow.addView(createHoldMouseButton("RIGHT CLICK", 2), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.2f))
+        tabRoot.addView(mouseBtnsRow)
+
+        // 3. Gyro Air-Mouse Trigger & Speed Card
         val gyroCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = roundedBox("#1E293B", dp(12))
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(8) }
         }
 
         airTriggerBtn = Button(this).apply {
@@ -703,7 +894,7 @@ class MainActivity : Activity(), SensorEventListener {
             background = roundedBox("#2563EB", dp(10))
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(52)
+                dp(48)
             )
             setOnTouchListener { v, event ->
                 when (event.actionMasked) {
@@ -735,11 +926,11 @@ class MainActivity : Activity(), SensorEventListener {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(8) }
+            ).apply { topMargin = dp(6) }
         }
 
         val gyroLockSwitch = Switch(this).apply {
-            text = "Lock Air-Mouse On"
+            text = "Lock Air-Mouse"
             setTextColor(Color.parseColor("#E2E8F0"))
             setOnCheckedChangeListener { _, isChecked ->
                 isAirMouseLockedOn = isChecked
@@ -752,7 +943,7 @@ class MainActivity : Activity(), SensorEventListener {
         val sensLabel = TextView(this).apply {
             text = "Speed:"
             setTextColor(Color.parseColor("#94A3B8"))
-            setPadding(dp(14), 0, dp(4), 0)
+            setPadding(dp(12), 0, dp(4), 0)
         }
         gyroOptionsRow.addView(sensLabel)
 
@@ -772,66 +963,16 @@ class MainActivity : Activity(), SensorEventListener {
         gyroCard.addView(gyroOptionsRow)
         tabRoot.addView(gyroCard)
 
-        // Trackpad + Scroll Strip (Auto Scroll-Lock Mode)
-        val padRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(195)
-            ).apply { topMargin = dp(10) }
-        }
-
-        touchpadView = TextView(this).apply {
-            text = "TRACKPAD (AUTO SCROLL-LOCK)\nSlide to move pointer • Tap for Left Click"
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#94A3B8"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            background = roundedBox("#1E293B", dp(12), "#334155")
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
-            setOnTouchListener { v, event -> handleTouchpadEvent(v, event) }
-        }
-        padRow.addView(touchpadView)
-
-        val scrollStrip = TextView(this).apply {
-            text = "S\nC\nR\nO\nL\nL"
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#94A3B8"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-            background = roundedBox("#1E293B", dp(12), "#334155")
-            layoutParams = LinearLayout.LayoutParams(dp(48), LinearLayout.LayoutParams.MATCH_PARENT).apply {
-                marginStart = dp(8)
-            }
-            setOnTouchListener { v, event -> handleScrollStripEvent(v, event) }
-        }
-        padRow.addView(scrollStrip)
-        tabRoot.addView(padRow)
-
-        // Mouse Click Buttons Row
-        val mouseBtnsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(46)
-            ).apply { topMargin = dp(8) }
-        }
-        mouseBtnsRow.addView(createHoldMouseButton("LEFT CLICK", 1), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.2f))
-        mouseBtnsRow.addView(createHoldMouseButton("MIDDLE", 4), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 0.8f).apply {
-            marginStart = dp(6)
-            marginEnd = dp(6)
-        })
-        mouseBtnsRow.addView(createHoldMouseButton("RIGHT CLICK", 2), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.2f))
-        tabRoot.addView(mouseBtnsRow)
-
-        // Clean Live Keyboard Row (Removed "Sends every keypress instantly" and "Last key" labels)
+        // 4. Existing Inline Live Keyboard Bar (kept as requested)
         val kbCard = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             background = roundedBox("#1E293B", dp(12), "#334155")
-            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setPadding(dp(12), dp(6), dp(12), dp(6))
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(10) }
+            ).apply { topMargin = dp(8) }
         }
 
         liveKeyboardInput = object : EditText(this) {
@@ -840,7 +981,7 @@ class MainActivity : Activity(), SensorEventListener {
                 return object : InputConnectionWrapper(base, true) {
                     override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
                         if (beforeLength > 0 && afterLength == 0) {
-                            sendKeyboardKey(0, 0x2A) // Backspace
+                            sendKeyboardKey(0, 0x2A)
                             return true
                         }
                         return super.deleteSurroundingText(beforeLength, afterLength)
@@ -883,7 +1024,7 @@ class MainActivity : Activity(), SensorEventListener {
                     val current = s.toString()
 
                     if (current.isEmpty()) {
-                        sendKeyboardKey(0, 0x2A) // Backspace
+                        sendKeyboardKey(0, 0x2A)
                         resetLiveInputBuffer()
                         return
                     }
@@ -905,7 +1046,7 @@ class MainActivity : Activity(), SensorEventListener {
                     actionId == EditorInfo.IME_ACTION_SEARCH ||
                     actionId == EditorInfo.IME_ACTION_NEXT
                 ) {
-                    sendKeyboardKey(0, 0x28) // Enter
+                    sendKeyboardKey(0, 0x28)
                     true
                 } else false
             }
@@ -918,113 +1059,336 @@ class MainActivity : Activity(), SensorEventListener {
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
             imm?.showSoftInput(liveKeyboardInput, InputMethodManager.SHOW_FORCED)
         }.apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(40)).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(38)).apply {
                 marginStart = dp(8)
             }
         }
         kbCard.addView(openKbBtn)
         tabRoot.addView(kbCard)
 
-        // Navigation D-Pad Card
-        val navCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = roundedBox("#1E293B", dp(12))
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(10) }
-        }
-
-        val navRow1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        navRow1.addView(createKeyButton("ESC / BACK", 0x29), weightParams())
-        navRow1.addView(createKeyButton("UP", 0x52), weightParams())
-        navRow1.addView(createKeyButton("BACKSPACE", 0x2A), weightParams())
-        navCard.addView(navRow1)
-
-        val navRow2 = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(6)
-            }
-        }
-        navRow2.addView(createKeyButton("LEFT", 0x50), weightParams())
-        navRow2.addView(createKeyButton("OK / ENTER", 0x28, "#0284C7"), weightParams())
-        navRow2.addView(createKeyButton("RIGHT", 0x4F), weightParams())
-        navCard.addView(navRow2)
-
-        val navRow3 = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(6)
-            }
-        }
-        navRow3.addView(createKeyButton("SPACE", 0x2C), weightParams())
-        navRow3.addView(createKeyButton("DOWN", 0x51), weightParams())
-        navRow3.addView(createKeyButton("TAB", 0x2B), weightParams())
-        navCard.addView(navRow3)
-        tabRoot.addView(navCard)
-
         return tabRoot
     }
 
     // =========================================================================
-    // TAB 2: MEDIA AND TV + DUAL CIRCULAR ROTARY DIAL & JOG WHEEL
+    // TAB 2: FULL LANDSCAPE PC KEYBOARD (WITH STICKY SHORTCUT MODIFIERS)
     // =========================================================================
 
-    private fun buildMediaAndTvTab(): View {
+    private data class KeySpec(
+        val label: String,
+        val hidCode: Int = 0,
+        val modifierBit: Int = 0,
+        val isCapsLock: Boolean = false,
+        val weight: Float = 1f,
+        val colorHex: String = "#334155"
+    )
+
+    private fun buildFullLandscapeKeyboardTab(): View {
+        val kbRoot = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBox("#1E293B", dp(12), "#334155")
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(8) }
+        }
+
+        // Top Shortcut Helper Strip (One-tap common combos + Sticky status)
+        val shortcutStrip = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(6) }
+        }
+
+        val hintText = TextView(this).apply {
+            text = "Tip: Tap CTRL, ALT, SHIFT, or WIN to latch it for combos"
+            setTextColor(Color.parseColor("#38BDF8"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            typeface = Typeface.DEFAULT_BOLD
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.8f)
+        }
+        shortcutStrip.addView(hintText)
+
+        val quickCombos = listOf(
+            "Copy" to (MOD_LEFT_CTRL to 0x06),
+            "Paste" to (MOD_LEFT_CTRL to 0x19),
+            "Undo" to (MOD_LEFT_CTRL to 0x1D),
+            "Select All" to (MOD_LEFT_CTRL to 0x04),
+            "Alt+Tab" to (MOD_LEFT_ALT to 0x2B)
+        )
+        for ((lbl, combo) in quickCombos) {
+            val btn = createStyledButton(lbl, "#0F172A") {
+                hapticTick()
+                sendKeyboardKey(combo.first, combo.second)
+            }.apply {
+                layoutParams = LinearLayout.LayoutParams(0, dp(32), 0.7f).apply { marginStart = dp(3) }
+            }
+            shortcutStrip.addView(btn)
+        }
+        kbRoot.addView(shortcutStrip)
+
+        modifierButtonsMap.clear()
+
+        val rows = listOf(
+            // Row 1: ESC + Function keys + DEL
+            listOf(
+                KeySpec("ESC", 0x29, colorHex = "#DC2626"),
+                KeySpec("F1", 0x3A), KeySpec("F2", 0x3B), KeySpec("F3", 0x3C), KeySpec("F4", 0x3D),
+                KeySpec("F5", 0x3E), KeySpec("F6", 0x3F), KeySpec("F7", 0x40), KeySpec("F8", 0x41),
+                KeySpec("F9", 0x42), KeySpec("F10", 0x43), KeySpec("F11", 0x44), KeySpec("F12", 0x45),
+                KeySpec("DEL", 0x4C, colorHex = "#475569")
+            ),
+            // Row 2: Number Row
+            listOf(
+                KeySpec("` ~", 0x35),
+                KeySpec("1 !", 0x1E), KeySpec("2 @", 0x1F), KeySpec("3 #", 0x20), KeySpec("4 $", 0x21),
+                KeySpec("5 %", 0x22), KeySpec("6 ^", 0x23), KeySpec("7 &", 0x24), KeySpec("8 *", 0x25),
+                KeySpec("9 (", 0x26), KeySpec("0 )", 0x27), KeySpec("- _", 0x2D), KeySpec("= +", 0x2E),
+                KeySpec("⌫ BKSP", 0x2A, weight = 1.6f, colorHex = "#475569")
+            ),
+            // Row 3: QWERTY Row
+            listOf(
+                KeySpec("TAB ⇥", 0x2B, weight = 1.4f, colorHex = "#475569"),
+                KeySpec("Q", 0x14), KeySpec("W", 0x1A), KeySpec("E", 0x08), KeySpec("R", 0x15),
+                KeySpec("T", 0x17), KeySpec("Y", 0x1C), KeySpec("U", 0x18), KeySpec("I", 0x0C),
+                KeySpec("O", 0x12), KeySpec("P", 0x13), KeySpec("[ {", 0x2F), KeySpec("] }", 0x30),
+                KeySpec("\\ |", 0x31, weight = 1.2f)
+            ),
+            // Row 4: Home Row with Caps Lock & Enter
+            listOf(
+                KeySpec("CAPS", 0x39, isCapsLock = true, weight = 1.6f, colorHex = "#475569"),
+                KeySpec("A", 0x04), KeySpec("S", 0x16), KeySpec("D", 0x07), KeySpec("F", 0x09),
+                KeySpec("G", 0x0A), KeySpec("H", 0x0B), KeySpec("J", 0x0D), KeySpec("K", 0x0E),
+                KeySpec("L", 0x0F), KeySpec("; :", 0x33), KeySpec("' \"", 0x34),
+                KeySpec("ENTER ↵", 0x28, weight = 1.8f, colorHex = "#0284C7")
+            ),
+            // Row 5: Shift Row + Up Arrow
+            listOf(
+                KeySpec("⇧ SHIFT", modifierBit = MOD_LEFT_SHIFT, weight = 1.9f, colorHex = "#475569"),
+                KeySpec("Z", 0x1D), KeySpec("X", 0x1B), KeySpec("C", 0x06), KeySpec("V", 0x19),
+                KeySpec("B", 0x05), KeySpec("N", 0x11), KeySpec("M", 0x10),
+                KeySpec(", <", 0x36), KeySpec(". >", 0x37), KeySpec("/ ?", 0x38),
+                KeySpec("▲", 0x52, colorHex = "#0284C7"),
+                KeySpec("⇧ SHIFT", modifierBit = MOD_LEFT_SHIFT, weight = 1.5f, colorHex = "#475569")
+            ),
+            // Row 6: Sticky Modifiers + Spacebar + Arrow Cluster
+            listOf(
+                KeySpec("CTRL", modifierBit = MOD_LEFT_CTRL, weight = 1.3f, colorHex = "#475569"),
+                KeySpec("WIN", modifierBit = MOD_LEFT_GUI, weight = 1.2f, colorHex = "#475569"),
+                KeySpec("ALT", modifierBit = MOD_LEFT_ALT, weight = 1.3f, colorHex = "#475569"),
+                KeySpec("SPACE", 0x2C, weight = 4.5f, colorHex = "#1E293B"),
+                KeySpec("ALT", modifierBit = MOD_LEFT_ALT, weight = 1.2f, colorHex = "#475569"),
+                KeySpec("◀", 0x50, colorHex = "#0284C7"),
+                KeySpec("▼", 0x51, colorHex = "#0284C7"),
+                KeySpec("▶", 0x4F, colorHex = "#0284C7")
+            )
+        )
+
+        for (rowSpecs in rows) {
+            val rowLayout = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    dp(38)
+                ).apply { topMargin = dp(4) }
+            }
+
+            for (spec in rowSpecs) {
+                val btn = Button(this).apply {
+                    text = spec.label
+                    setTextColor(Color.WHITE)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+                    typeface = Typeface.DEFAULT_BOLD
+                    setPadding(dp(2), dp(2), dp(2), dp(2))
+                    background = roundedBox(spec.colorHex, dp(6), "#64748B")
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, spec.weight).apply {
+                        marginStart = dp(2)
+                        marginEnd = dp(2)
+                    }
+                    setOnClickListener {
+                        hapticTick()
+                        handleFullKeyboardKeyTap(spec, this)
+                    }
+                }
+                if (spec.modifierBit != 0 && !modifierButtonsMap.containsKey(spec.modifierBit)) {
+                    modifierButtonsMap[spec.modifierBit] = btn
+                }
+                if (spec.isCapsLock) {
+                    capsButtonRef = btn
+                }
+                rowLayout.addView(btn)
+            }
+            kbRoot.addView(rowLayout)
+        }
+
+        return kbRoot
+    }
+
+    private fun handleFullKeyboardKeyTap(spec: KeySpec, buttonView: Button) {
+        if (spec.modifierBit != 0) {
+            // Toggle sticky latch for this modifier (Ctrl, Shift, Alt, Win)
+            stickyModifiersMask = stickyModifiersMask xor spec.modifierBit
+            updateStickyModifierButtonStyles()
+            return
+        }
+
+        if (spec.isCapsLock) {
+            isCapsLocked = !isCapsLocked
+            sendKeyboardKey(0, 0x39) // HID Caps Lock key
+            capsButtonRef?.background = if (isCapsLocked) {
+                roundedBox("#16A34A", dp(6), "#4ADE80")
+            } else {
+                roundedBox("#475569", dp(6), "#64748B")
+            }
+            return
+        }
+
+        // Regular key: combine with any latched sticky modifiers + Caps Lock for letters
+        var effectiveMod = stickyModifiersMask
+        if (isCapsLocked && spec.hidCode in 0x04..0x1D) {
+            effectiveMod = effectiveMod xor MOD_LEFT_SHIFT
+        }
+
+        sendKeyboardKey(effectiveMod, spec.hidCode)
+
+        // Clear one-shot sticky modifiers after sending the shortcut combo
+        if (stickyModifiersMask != 0) {
+            stickyModifiersMask = 0
+            updateStickyModifierButtonStyles()
+        }
+    }
+
+    private fun updateStickyModifierButtonStyles() {
+        for ((bit, btn) in modifierButtonsMap) {
+            val active = (stickyModifiersMask and bit) != 0
+            btn.background = if (active) {
+                roundedBox("#0284C7", dp(6), "#38BDF8")
+            } else {
+                roundedBox("#475569", dp(6), "#64748B")
+            }
+        }
+    }
+
+    // =========================================================================
+    // TAB 3: MEDIA (VOLUME DIAL WITH CENTER % + NEARBY MUTE ICON + FIXED SEEK JOG WHEEL)
+    // =========================================================================
+
+    private fun buildMediaTab(): View {
         val tabRoot = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(10) }
+            ).apply { topMargin = dp(8) }
         }
 
-        // 1. Dual Circular Dials Card: Volume Rotary Dial + Timeline Seek Jog Wheel
         val dialsCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = roundedBox("#1E293B", dp(12), "#334155")
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setPadding(dp(10), dp(10), dp(10), dp(10))
         }
 
-        val dialsHeader = TextView(this).apply {
-            text = "ROTARY DIAL & JOG WHEEL (AUTO SCROLL-LOCK)"
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#38BDF8"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+        // Top Options Bar: Mute Icon Button near Volume Dial + Seek Mode Toggle for Jog Wheel
+        val dialsTopBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(6) }
+        }
+
+        muteButtonRef = Button(this).apply {
+            text = "🔊 Mute"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
             typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 0, dp(8))
+            background = roundedBox("#334155", dp(8), "#475569")
+            layoutParams = LinearLayout.LayoutParams(0, dp(36), 1f).apply { marginEnd = dp(4) }
+            setOnClickListener {
+                hapticTick()
+                toggleMuteState()
+            }
         }
-        dialsCard.addView(dialsHeader)
+        dialsTopBar.addView(muteButtonRef)
 
+        val seekModeBtn = Button(this).apply {
+            text = "Seek Mode: Arrow ◀/▶"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            typeface = Typeface.DEFAULT_BOLD
+            background = roundedBox("#0284C7", dp(8), "#38BDF8")
+            layoutParams = LinearLayout.LayoutParams(0, dp(36), 1.2f).apply { marginStart = dp(4) }
+            setOnClickListener {
+                hapticTick()
+                seekWheelUseArrowKeys = !seekWheelUseArrowKeys
+                text = if (seekWheelUseArrowKeys) "Seek Mode: Arrow ◀/▶" else "Seek Mode: Media ⏪/⏩"
+            }
+        }
+        dialsTopBar.addView(seekModeBtn)
+        dialsCard.addView(dialsTopBar)
+
+        // Dual Circular Dials Row
         val dialsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(175)
+                dp(185)
             )
         }
 
-        // Left Circular Dial: Volume Rotary Dial
-        val volumeDial = createCircularDialView(
+        // Left Dial: Volume Rotary Dial showing live Volume % in the center
+        val volumeDial = createRotaryDialView(
             title = "VOLUME DIAL",
-            centerLabel = "MUTE",
             accentColor = "#38BDF8",
-            onStepClockwise = { sendConsumerKey(0x00E9) },      // Volume Up
-            onStepCounterClockwise = { sendConsumerKey(0x00EA) }, // Volume Down
-            onCenterTap = { sendConsumerKey(0x00E2) }             // Mute
+            centerTextProvider = {
+                if (isVolumeMuted) "MUTED" else "$estimatedVolumePercent%"
+            },
+            centerSubTextProvider = { "VOL" },
+            onStepClockwise = { adjustVolumeStep(+2) },
+            onStepCounterClockwise = { adjustVolumeStep(-2) },
+            onCenterTap = {
+                // Tapping center resets volume display to 50% calibration
+                estimatedVolumePercent = 50
+                isVolumeMuted = false
+                updateVolumeUi()
+                Toast.makeText(this, "Volume display synced to 50%", Toast.LENGTH_SHORT).show()
+            }
         )
+        volumeDialViewRef = volumeDial
 
-        // Right Circular Dial: Seek / Timeline Scrub Jog Wheel
-        val seekJogWheel = createCircularDialView(
+        // Right Dial: Fixed Seek Jog Wheel (Sends Right/Left Arrow or Media FF/RW smoothly)
+        var seekOffsetSec = 0
+        val seekJogWheel = createRotaryDialView(
             title = "SEEK JOG WHEEL",
-            centerLabel = "PLAY/PAUSE",
             accentColor = "#A855F7",
-            onStepClockwise = { sendConsumerKey(0x00B3) },        // Fast Forward / Seek +
-            onStepCounterClockwise = { sendConsumerKey(0x00B4) }, // Rewind / Seek -
-            onCenterTap = { sendConsumerKey(0x00CD) }             // Play / Pause
+            centerTextProvider = {
+                when {
+                    seekOffsetSec > 0 -> "+${seekOffsetSec}s"
+                    seekOffsetSec < 0 -> "${seekOffsetSec}s"
+                    else -> "⏯ PLAY"
+                }
+            },
+            centerSubTextProvider = { "SCRUB" },
+            onStepClockwise = {
+                seekOffsetSec += 5
+                performSeekStep(forward = true)
+            },
+            onStepCounterClockwise = {
+                seekOffsetSec -= 5
+                performSeekStep(forward = false)
+            },
+            onCenterTap = {
+                seekOffsetSec = 0
+                sendConsumerKey(0x00CD) // Play / Pause
+            },
+            onReleaseWheel = {
+                seekOffsetSec = 0
+            }
         )
 
         dialsRow.addView(volumeDial, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply {
@@ -1036,7 +1400,7 @@ class MainActivity : Activity(), SensorEventListener {
         dialsCard.addView(dialsRow)
         tabRoot.addView(dialsCard)
 
-        // 2. TV Playback & Transport Controls Card
+        // Media & TV Remote Buttons Grid
         val mediaCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = roundedBox("#1E293B", dp(12), "#334155")
@@ -1044,13 +1408,22 @@ class MainActivity : Activity(), SensorEventListener {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(10) }
+            ).apply { topMargin = dp(8) }
         }
 
         val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row1.addView(createConsumerButton("VOL -", 0x00EA), weightParams())
-        row1.addView(createConsumerButton("MUTE", 0x00E2, "#DC2626"), weightParams())
-        row1.addView(createConsumerButton("VOL +", 0x00E9), weightParams())
+        row1.addView(createStyledButton("VOL -", "#334155") {
+            hapticTick()
+            adjustVolumeStep(-2)
+        }.apply { layoutParams = weightParams() })
+        row1.addView(createStyledButton("🔇 MUTE", "#DC2626") {
+            hapticTick()
+            toggleMuteState()
+        }.apply { layoutParams = weightParams() })
+        row1.addView(createStyledButton("VOL +", "#334155") {
+            hapticTick()
+            adjustVolumeStep(+2)
+        }.apply { layoutParams = weightParams() })
         mediaCard.addView(row1)
 
         val row2 = LinearLayout(this).apply {
@@ -1070,9 +1443,15 @@ class MainActivity : Activity(), SensorEventListener {
                 topMargin = dp(6)
             }
         }
-        row3.addView(createConsumerButton("⏪ REWIND", 0x00B4), weightParams())
+        row3.addView(createStyledButton("⏪ SEEK -", "#334155") {
+            hapticTick()
+            performSeekStep(forward = false)
+        }.apply { layoutParams = weightParams() })
         row3.addView(createConsumerButton("⏹ STOP", 0x00B7), weightParams())
-        row3.addView(createConsumerButton("FAST FWD ⏩", 0x00B3), weightParams())
+        row3.addView(createStyledButton("SEEK + ⏩", "#334155") {
+            hapticTick()
+            performSeekStep(forward = true)
+        }.apply { layoutParams = weightParams() })
         mediaCard.addView(row3)
 
         val row4 = LinearLayout(this).apply {
@@ -1101,23 +1480,60 @@ class MainActivity : Activity(), SensorEventListener {
         return tabRoot
     }
 
-    /**
-     * Interactive Circular Rotary Dial & Jog Wheel View.
-     * Supports circular finger rotation (24 detents per revolution) + center button tap + scroll lock.
-     */
-    private fun createCircularDialView(
+    private fun adjustVolumeStep(deltaPercent: Int) {
+        isVolumeMuted = false
+        estimatedVolumePercent = (estimatedVolumePercent + deltaPercent).coerceIn(0, 100)
+        if (deltaPercent > 0) {
+            sendConsumerKey(0x00E9) // Volume Up
+        } else {
+            sendConsumerKey(0x00EA) // Volume Down
+        }
+        updateVolumeUi()
+    }
+
+    private fun toggleMuteState() {
+        isVolumeMuted = !isVolumeMuted
+        sendConsumerKey(0x00E2) // Mute
+        updateVolumeUi()
+    }
+
+    private fun updateVolumeUi() {
+        volumeDialViewRef?.invalidate()
+        muteButtonRef?.apply {
+            if (isVolumeMuted) {
+                text = "🔇 Muted"
+                background = roundedBox("#DC2626", dp(8), "#F87171")
+            } else {
+                text = "🔊 Mute"
+                background = roundedBox("#334155", dp(8), "#475569")
+            }
+        }
+    }
+
+    private fun performSeekStep(forward: Boolean) {
+        if (seekWheelUseArrowKeys) {
+            // Right Arrow (0x4F) and Left Arrow (0x50) scrub video timelines in YouTube, Netflix, VLC, Kodi, etc.
+            sendKeyboardKey(0, if (forward) 0x4F else 0x50)
+        } else {
+            // Consumer Fast Forward (0x00B3) and Rewind (0x00B4)
+            sendConsumerKey(if (forward) 0x00B3 else 0x00B4)
+        }
+    }
+
+    private fun createRotaryDialView(
         title: String,
-        centerLabel: String,
         accentColor: String,
+        centerTextProvider: () -> String,
+        centerSubTextProvider: () -> String,
         onStepClockwise: () -> Unit,
         onStepCounterClockwise: () -> Unit,
-        onCenterTap: () -> Unit
+        onCenterTap: () -> Unit,
+        onReleaseWheel: (() -> Unit)? = null
     ): View {
         return object : View(this) {
             private var currentAngleRad = -Math.PI / 2
             private var lastAngleRad = 0.0
             private var accumulatedAngle = 0.0
-            private var isDraggingWheel = false
             private var downX = 0f
             private var downY = 0f
             private var downTime = 0L
@@ -1150,28 +1566,30 @@ class MainActivity : Activity(), SensorEventListener {
                 typeface = Typeface.DEFAULT_BOLD
                 textSize = dp(11).toFloat()
             }
-            private val centerTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            private val centerMainPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
                 textAlign = Paint.Align.CENTER
                 typeface = Typeface.DEFAULT_BOLD
-                textSize = dp(9).toFloat()
+                textSize = dp(14).toFloat()
+            }
+            private val centerSubPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#94A3B8")
+                textAlign = Paint.Align.CENTER
+                typeface = Typeface.DEFAULT_BOLD
+                textSize = dp(8.5f).toFloat()
             }
 
             override fun onDraw(canvas: Canvas) {
                 super.onDraw(canvas)
                 val cx = width / 2f
                 val cy = (height / 2f) + dp(8)
-                val outerR = min(width, height - dp(20)) * 0.43f
+                val outerR = min(width, height - dp(20)) * 0.44f
                 val innerR = outerR * 0.48f
 
-                // Title above dial
-                canvas.drawText(title, cx, dp(15).toFloat(), titlePaint)
-
-                // Outer wheel body
+                canvas.drawText(title, cx, dp(14).toFloat(), titlePaint)
                 canvas.drawCircle(cx, cy, outerR, ringPaint)
                 canvas.drawCircle(cx, cy, outerR, borderPaint)
 
-                // 24 rotary encoder tick marks
                 for (i in 0 until 24) {
                     val a = (i * Math.PI * 2.0 / 24.0)
                     val x1 = cx + (outerR * 0.80f * cos(a)).toFloat()
@@ -1181,22 +1599,21 @@ class MainActivity : Activity(), SensorEventListener {
                     canvas.drawLine(x1, y1, x2, y2, tickPaint)
                 }
 
-                // Current rotation indicator dot on the wheel rim
-                val knobDist = outerR * 0.68f
+                val knobDist = outerR * 0.67f
                 val kx = cx + (knobDist * cos(currentAngleRad)).toFloat()
                 val ky = cy + (knobDist * sin(currentAngleRad)).toFloat()
                 canvas.drawCircle(kx, ky, dp(7).toFloat(), knobPaint)
 
-                // Center button
                 canvas.drawCircle(cx, cy, innerR, centerPaint)
                 canvas.drawCircle(cx, cy, innerR, borderPaint)
-                canvas.drawText(centerLabel, cx, cy + dp(3), centerTextPaint)
+                canvas.drawText(centerTextProvider(), cx, cy + dp(2), centerMainPaint)
+                canvas.drawText(centerSubTextProvider(), cx, cy + dp(14), centerSubPaint)
             }
 
             override fun onTouchEvent(event: MotionEvent): Boolean {
                 val cx = width / 2f
                 val cy = (height / 2f) + dp(8)
-                val outerR = min(width, height - dp(20)) * 0.43f
+                val outerR = min(width, height - dp(20)) * 0.44f
                 val innerR = outerR * 0.48f
                 val dx = event.x - cx
                 val dy = event.y - cy
@@ -1210,17 +1627,17 @@ class MainActivity : Activity(), SensorEventListener {
                         downY = event.y
                         downTime = System.currentTimeMillis()
                         lastAngleRad = atan2(dy.toDouble(), dx.toDouble())
-                        currentAngleRad = lastAngleRad
+                        if (dist > innerR * 0.65f) {
+                            currentAngleRad = lastAngleRad
+                        }
                         accumulatedAngle = 0.0
-                        isDraggingWheel = dist > innerR * 0.85f
                         invalidate()
                         return true
                     }
                     MotionEvent.ACTION_MOVE -> {
                         rootScrollView.isScrollLocked = true
                         parent?.requestDisallowInterceptTouchEvent(true)
-                        if (dist > innerR * 0.65f) {
-                            isDraggingWheel = true
+                        if (dist > dp(14)) {
                             val angle = atan2(dy.toDouble(), dx.toDouble())
                             var delta = angle - lastAngleRad
                             if (delta > Math.PI) delta -= 2.0 * Math.PI
@@ -1230,7 +1647,7 @@ class MainActivity : Activity(), SensorEventListener {
                             lastAngleRad = angle
                             currentAngleRad = angle
 
-                            val stepThreshold = Math.PI / 10.0 // ~18 degrees per step
+                            val stepThreshold = Math.PI / 14.0 // Responsive ~12.8° per detent step
                             while (accumulatedAngle >= stepThreshold) {
                                 accumulatedAngle -= stepThreshold
                                 hapticTick()
@@ -1256,7 +1673,7 @@ class MainActivity : Activity(), SensorEventListener {
                                 onCenterTap()
                             }
                         }
-                        isDraggingWheel = false
+                        onReleaseWheel?.invoke()
                         invalidate()
                         return true
                     }
@@ -1267,72 +1684,24 @@ class MainActivity : Activity(), SensorEventListener {
     }
 
     // =========================================================================
-    // TAB 3: GAMEPAD CONTROLLER (XBOX 360 / PS5 DUALSENSE / MOBILE PRO)
+    // TAB 4: LANDSCAPE GAMEPAD CONTROLLER (HORIZONTAL WIDESCREEN LAYOUT)
     // =========================================================================
 
-    private fun buildGamepadTab(): View {
+    private fun buildLandscapeGamepadTab(): View {
         val tabRoot = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(10) }
+            ).apply { topMargin = dp(6) }
         }
-
-        // Layout Mode Selector Row (Xbox 360 | PS5 DualSense | Mobile Pro) + Gyro Tilt Steering Toggle
-        val modeCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = roundedBox("#1E293B", dp(12), "#334155")
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-        }
-
-        val styleBtnsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-
-        val xboxBtn = createStyledButton("Xbox 360", "#107C10") {
-            currentGamepadStyle = GamepadStyle.XBOX_360
-            rebuildGamepadLayout()
-        }.apply { layoutParams = weightParams(dp(38)) }
-
-        val ps5Btn = createStyledButton("PS5 DualSense", "#00439C") {
-            currentGamepadStyle = GamepadStyle.PS5_DUALSENSE
-            rebuildGamepadLayout()
-        }.apply { layoutParams = weightParams(dp(38)) }
-
-        val mobileProBtn = createStyledButton("Mobile Pro", "#7C3AED") {
-            currentGamepadStyle = GamepadStyle.MOBILE_PRO
-            rebuildGamepadLayout()
-        }.apply { layoutParams = weightParams(dp(38)) }
-
-        styleBtnsRow.addView(xboxBtn)
-        styleBtnsRow.addView(ps5Btn)
-        styleBtnsRow.addView(mobileProBtn)
-        modeCard.addView(styleBtnsRow)
-
-        val gyroSteerSwitch = Switch(this).apply {
-            text = "Gyro Tilt Steering (Tilt phone to steer Left Stick)"
-            setTextColor(Color.parseColor("#E2E8F0"))
-            setPadding(dp(4), dp(8), dp(4), 0)
-            setOnCheckedChangeListener { _, isChecked ->
-                isGamepadGyroSteering = isChecked
-                accelCalibrated = false
-                if (!isChecked) {
-                    leftStickX = 0
-                    leftStickY = 0
-                    sendGamepadReport()
-                }
-            }
-        }
-        modeCard.addView(gyroSteerSwitch)
-        tabRoot.addView(modeCard)
 
         gamepadContentContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(10) }
+            )
         }
         tabRoot.addView(gamepadContentContainer)
 
@@ -1357,122 +1726,134 @@ class MainActivity : Activity(), SensorEventListener {
         val padCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = roundedBox(themeBg, dp(14), themeBorder)
-            setPadding(dp(10), dp(12), dp(10), dp(12))
+            setPadding(dp(10), dp(8), dp(10), dp(10))
         }
 
-        val headerText = TextView(this).apply {
-            text = when (currentGamepadStyle) {
-                GamepadStyle.XBOX_360 -> "XBOX 360 CONTROLLER LAYOUT"
-                GamepadStyle.PS5_DUALSENSE -> "PS5 DUALSENSE CONTROLLER LAYOUT"
-                GamepadStyle.MOBILE_PRO -> "MOBILE PRO ERGONOMIC TOUCH CONTROLLER"
-            }
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-            typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 0, dp(8))
+        // Row 1 (Horizontal Top Bar): Left Triggers (LT/LB) + Style Switcher + Right Triggers (RB/RT)
+        val topTriggersAndStyleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
         }
-        padCard.addView(headerText)
 
-        // 1. Shoulder & Trigger Row (L2/LT, L1/LB, R1/RB, R2/RT)
-        val triggersRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val (l2Name, l1Name, r1Name, r2Name) = when (currentGamepadStyle) {
             GamepadStyle.XBOX_360 -> listOf("LT", "LB", "RB", "RT")
             GamepadStyle.PS5_DUALSENSE -> listOf("L2", "L1", "R1", "R2")
-            GamepadStyle.MOBILE_PRO -> listOf("TRIG L2", "BUMP L1", "BUMP R1", "TRIG R2")
-        }
-        triggersRow.addView(createHoldGamepadButton(l2Name, 1 shl 6, "#334155"), weightParams(dp(44)))
-        triggersRow.addView(createHoldGamepadButton(l1Name, 1 shl 4, "#475569"), weightParams(dp(44)))
-        triggersRow.addView(createHoldGamepadButton(r1Name, 1 shl 5, "#475569"), weightParams(dp(44)))
-        triggersRow.addView(createHoldGamepadButton(r2Name, 1 shl 7, "#334155"), weightParams(dp(44)))
-        padCard.addView(triggersRow)
-
-        // 2. Center System Buttons Row (Back/Create, Guide/PS, Start/Options)
-        val centerSysRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(8)
-            }
-        }
-        val (selectLabel, guideLabel, startLabel) = when (currentGamepadStyle) {
-            GamepadStyle.XBOX_360 -> Triple("BACK", "XBOX GUIDE", "START")
-            GamepadStyle.PS5_DUALSENSE -> Triple("CREATE", "PS HOME", "OPTIONS")
-            GamepadStyle.MOBILE_PRO -> Triple("SELECT", "HOME", "START")
-        }
-        centerSysRow.addView(createHoldGamepadButton(selectLabel, 1 shl 8, "#334155"), weightParams(dp(38)))
-        centerSysRow.addView(createHoldGamepadButton(guideLabel, 1 shl 12, themeBorder), weightParams(dp(38)))
-        centerSysRow.addView(createHoldGamepadButton(startLabel, 1 shl 9, "#334155"), weightParams(dp(38)))
-        padCard.addView(centerSysRow)
-
-        // 3. Upper Controls Row:
-        // Xbox 360: Left Stick on Top-Left, ABXY on Top-Right
-        // PS5 DualSense: D-Pad on Top-Left, △○✕□ on Top-Right
-        // Mobile Pro: Enlarged D-Pad + Enlarged Action Cluster
-        val upperClusterRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(165)
-            ).apply { topMargin = dp(10) }
+            GamepadStyle.MOBILE_PRO -> listOf("L2", "L1", "R1", "R2")
         }
 
-        if (currentGamepadStyle == GamepadStyle.XBOX_360) {
-            val leftStickView = createVirtualJoystickView("LEFT STICK (L3)", "#107C10") { x, y ->
-                leftStickX = x
-                leftStickY = y
-                sendGamepadReport()
-            }
-            upperClusterRow.addView(leftStickView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
-            upperClusterRow.addView(buildFaceButtonsCluster(), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
-        } else {
-            upperClusterRow.addView(buildDpadCluster(), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
-            upperClusterRow.addView(buildFaceButtonsCluster(), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
-        }
-        padCard.addView(upperClusterRow)
+        topTriggersAndStyleRow.addView(createHoldGamepadButton(l2Name, 1 shl 6, "#334155"), LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginEnd = dp(4) })
+        topTriggersAndStyleRow.addView(createHoldGamepadButton(l1Name, 1 shl 4, "#475569"), LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginEnd = dp(6) })
 
-        // 4. Lower Controls Row:
-        // Xbox 360: D-Pad on Bottom-Left, Right Stick on Bottom-Right
-        // PS5 / Mobile Pro: Left Stick on Bottom-Left, Right Stick on Bottom-Right
-        val lowerClusterRow = LinearLayout(this).apply {
+        // Center Style Pills (Xbox 360 | PS5 | Mobile)
+        topTriggersAndStyleRow.addView(createStyledButton("Xbox", "#107C10") {
+            currentGamepadStyle = GamepadStyle.XBOX_360
+            rebuildGamepadLayout()
+        }.apply { layoutParams = LinearLayout.LayoutParams(0, dp(34), 0.85f).apply { marginEnd = dp(3) } })
+
+        topTriggersAndStyleRow.addView(createStyledButton("PS5", "#00439C") {
+            currentGamepadStyle = GamepadStyle.PS5_DUALSENSE
+            rebuildGamepadLayout()
+        }.apply { layoutParams = LinearLayout.LayoutParams(0, dp(34), 0.85f).apply { marginEnd = dp(3) } })
+
+        topTriggersAndStyleRow.addView(createStyledButton("Mobile", "#7C3AED") {
+            currentGamepadStyle = GamepadStyle.MOBILE_PRO
+            rebuildGamepadLayout()
+        }.apply { layoutParams = LinearLayout.LayoutParams(0, dp(34), 0.85f).apply { marginEnd = dp(6) } })
+
+        topTriggersAndStyleRow.addView(createHoldGamepadButton(r1Name, 1 shl 5, "#475569"), LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginEnd = dp(4) })
+        topTriggersAndStyleRow.addView(createHoldGamepadButton(r2Name, 1 shl 7, "#334155"), LinearLayout.LayoutParams(0, dp(40), 1f))
+        padCard.addView(topTriggersAndStyleRow)
+
+        // Row 2 (Horizontal Widescreen Deck):
+        // [Col 1: Left Stick / D-Pad] [Col 2: D-Pad / Left Stick] [Col 3: Center Controls + Gyro] [Col 4: Right Stick] [Col 5: Face Buttons]
+        val landscapeDeck = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(160)
-            ).apply { topMargin = dp(10) }
+                dp(175)
+            ).apply { topMargin = dp(8) }
         }
 
-        if (currentGamepadStyle == GamepadStyle.XBOX_360) {
-            lowerClusterRow.addView(buildDpadCluster(), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
-        } else {
-            val leftStickView = createVirtualJoystickView("LEFT STICK (L3)", themeBorder) { x, y ->
-                leftStickX = x
-                leftStickY = y
-                sendGamepadReport()
-            }
-            lowerClusterRow.addView(leftStickView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
+        val leftStickView = createVirtualJoystickView("L-STICK", themeBorder) { x, y ->
+            leftStickX = x
+            leftStickY = y
+            sendGamepadReport()
         }
-
-        val rightStickView = createVirtualJoystickView("RIGHT STICK (R3)", themeBorder) { x, y ->
+        val dpadView = buildDpadCluster()
+        val rightStickView = createVirtualJoystickView("R-STICK", themeBorder) { x, y ->
             rightStickX = x
             rightStickY = y
             sendGamepadReport()
         }
-        lowerClusterRow.addView(rightStickView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
-        padCard.addView(lowerClusterRow)
+        val faceButtonsView = buildFaceButtonsCluster()
 
-        // 5. Stick Click Row (L3 & R3 buttons)
-        val stickClicksRow = LinearLayout(this).apply {
+        // Center Column: Select/Back, Guide/PS, Start/Options, L3/R3, Gyro Tilt Steer
+        val centerCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(4), dp(2), dp(4), dp(2))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.15f)
+        }
+
+        val (selectLabel, guideLabel, startLabel) = when (currentGamepadStyle) {
+            GamepadStyle.XBOX_360 -> Triple("BACK", "XBOX", "START")
+            GamepadStyle.PS5_DUALSENSE -> Triple("CREATE", "PS", "OPTIONS")
+            GamepadStyle.MOBILE_PRO -> Triple("SEL", "HOME", "START")
+        }
+
+        val sysBtnsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        sysBtnsRow.addView(createHoldGamepadButton(selectLabel, 1 shl 8, "#334155"), weightParams(dp(34)))
+        sysBtnsRow.addView(createHoldGamepadButton(guideLabel, 1 shl 12, themeBorder), weightParams(dp(34)))
+        sysBtnsRow.addView(createHoldGamepadButton(startLabel, 1 shl 9, "#334155"), weightParams(dp(34)))
+        centerCol.addView(sysBtnsRow)
+
+        val l3r3Row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(8)
+                topMargin = dp(6)
             }
         }
-        stickClicksRow.addView(createHoldGamepadButton("L3 (LEFT STICK CLICK)", 1 shl 10, "#334155"), weightParams(dp(38)))
-        stickClicksRow.addView(createHoldGamepadButton("R3 (RIGHT STICK CLICK)", 1 shl 11, "#334155"), weightParams(dp(38)))
-        padCard.addView(stickClicksRow)
+        l3r3Row.addView(createHoldGamepadButton("L3", 1 shl 10, "#334155"), weightParams(dp(34)))
+        l3r3Row.addView(createHoldGamepadButton("R3", 1 shl 11, "#334155"), weightParams(dp(34)))
+        centerCol.addView(l3r3Row)
 
+        val gyroBtn = createStyledButton(
+            if (isGamepadGyroSteering) "Gyro Steer: ON" else "Gyro Steer: OFF",
+            if (isGamepadGyroSteering) "#16A34A" else "#334155"
+        ) {
+            isGamepadGyroSteering = !isGamepadGyroSteering
+            if (!isGamepadGyroSteering) {
+                leftStickX = 0
+                leftStickY = 0
+                sendGamepadReport()
+            }
+            rebuildGamepadLayout()
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(34)).apply {
+                topMargin = dp(6)
+            }
+        }
+        centerCol.addView(gyroBtn)
+
+        // Arrange Left & Right clusters horizontally based on controller style
+        if (currentGamepadStyle == GamepadStyle.XBOX_360) {
+            // Xbox 360: Left Stick outer-left, D-Pad inner-left, Center, Right Stick inner-right, ABXY outer-right
+            landscapeDeck.addView(leftStickView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.15f))
+            landscapeDeck.addView(dpadView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.1f))
+            landscapeDeck.addView(centerCol)
+            landscapeDeck.addView(rightStickView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.15f))
+            landscapeDeck.addView(faceButtonsView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.15f))
+        } else {
+            // PS5 DualSense / Mobile Pro: D-Pad outer-left, Left Stick inner-left, Center, Right Stick inner-right, Face Buttons outer-right
+            landscapeDeck.addView(dpadView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.1f))
+            landscapeDeck.addView(leftStickView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.15f))
+            landscapeDeck.addView(centerCol)
+            landscapeDeck.addView(rightStickView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.15f))
+            landscapeDeck.addView(faceButtonsView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.15f))
+        }
+
+        padCard.addView(landscapeDeck)
         gamepadContentContainer.addView(padCard)
     }
 
@@ -1480,31 +1861,30 @@ class MainActivity : Activity(), SensorEventListener {
         val dpadGrid = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(4), dp(4), dp(4), dp(4))
         }
 
         val rowTop = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        rowTop.addView(createHatButton("▲", 0), LinearLayout.LayoutParams(dp(52), dp(46)))
+        rowTop.addView(createHatButton("▲", 0), LinearLayout.LayoutParams(dp(44), dp(42)))
 
         val rowMid = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(4)
-                bottomMargin = dp(4)
+                topMargin = dp(3)
+                bottomMargin = dp(3)
             }
         }
-        rowMid.addView(createHatButton("◀", 6), LinearLayout.LayoutParams(dp(52), dp(46)).apply { marginEnd = dp(24) })
-        rowMid.addView(createHatButton("▶", 2), LinearLayout.LayoutParams(dp(52), dp(46)))
+        rowMid.addView(createHatButton("◀", 6), LinearLayout.LayoutParams(dp(44), dp(42)).apply { marginEnd = dp(18) })
+        rowMid.addView(createHatButton("▶", 2), LinearLayout.LayoutParams(dp(44), dp(42)))
 
         val rowBot = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        rowBot.addView(createHatButton("▼", 4), LinearLayout.LayoutParams(dp(52), dp(46)))
+        rowBot.addView(createHatButton("▼", 4), LinearLayout.LayoutParams(dp(44), dp(42)))
 
         dpadGrid.addView(rowTop)
         dpadGrid.addView(rowMid)
@@ -1516,13 +1896,12 @@ class MainActivity : Activity(), SensorEventListener {
         val cluster = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(4), dp(4), dp(4), dp(4))
         }
 
         val (topLbl, leftLbl, rightLbl, botLbl) = when (currentGamepadStyle) {
             GamepadStyle.XBOX_360 -> listOf("Y", "X", "B", "A")
             GamepadStyle.PS5_DUALSENSE -> listOf("△", "□", "○", "✕")
-            GamepadStyle.MOBILE_PRO -> listOf("Y / △", "X / □", "B / ○", "A / ✕")
+            GamepadStyle.MOBILE_PRO -> listOf("Y", "X", "B", "A")
         }
 
         val (topColor, leftColor, rightColor, botColor) = when (currentGamepadStyle) {
@@ -1531,8 +1910,8 @@ class MainActivity : Activity(), SensorEventListener {
             GamepadStyle.MOBILE_PRO -> listOf("#7C3AED", "#2563EB", "#DC2626", "#16A34A")
         }
 
-        val btnW = if (currentGamepadStyle == GamepadStyle.MOBILE_PRO) dp(64) else dp(54)
-        val btnH = dp(46)
+        val btnW = dp(46)
+        val btnH = dp(42)
 
         val rowTop = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1544,11 +1923,11 @@ class MainActivity : Activity(), SensorEventListener {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(4)
-                bottomMargin = dp(4)
+                topMargin = dp(3)
+                bottomMargin = dp(3)
             }
         }
-        rowMid.addView(createHoldGamepadButton(leftLbl, 1 shl 2, leftColor), LinearLayout.LayoutParams(btnW, btnH).apply { marginEnd = dp(18) })
+        rowMid.addView(createHoldGamepadButton(leftLbl, 1 shl 2, leftColor), LinearLayout.LayoutParams(btnW, btnH).apply { marginEnd = dp(16) })
         rowMid.addView(createHoldGamepadButton(rightLbl, 1 shl 1, rightColor), LinearLayout.LayoutParams(btnW, btnH))
 
         val rowBot = LinearLayout(this).apply {
@@ -1590,17 +1969,17 @@ class MainActivity : Activity(), SensorEventListener {
                 color = Color.parseColor("#94A3B8")
                 textAlign = Paint.Align.CENTER
                 typeface = Typeface.DEFAULT_BOLD
-                textSize = dp(10).toFloat()
+                textSize = dp(9.5f).toFloat()
             }
 
             override fun onDraw(canvas: Canvas) {
                 super.onDraw(canvas)
                 val cx = width / 2f
-                val cy = (height / 2f) + dp(6)
-                val maxR = min(width, height - dp(16)) * 0.40f
+                val cy = (height / 2f) + dp(5)
+                val maxR = min(width, height - dp(14)) * 0.42f
                 val thumbR = maxR * 0.42f
 
-                canvas.drawText(label, cx, dp(13).toFloat(), labelPaint)
+                canvas.drawText(label, cx, dp(12).toFloat(), labelPaint)
                 canvas.drawCircle(cx, cy, maxR, basePaint)
                 canvas.drawCircle(cx, cy, maxR, ringPaint)
 
@@ -1611,8 +1990,8 @@ class MainActivity : Activity(), SensorEventListener {
 
             override fun onTouchEvent(event: MotionEvent): Boolean {
                 val cx = width / 2f
-                val cy = (height / 2f) + dp(6)
-                val maxR = min(width, height - dp(16)) * 0.40f
+                val cy = (height / 2f) + dp(5)
+                val maxR = min(width, height - dp(14)) * 0.42f
 
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
@@ -1651,7 +2030,7 @@ class MainActivity : Activity(), SensorEventListener {
     }
 
     // =========================================================================
-    // TAB 4: SYSTEM POWER CONTROLS
+    // TAB 5: SYSTEM POWER CONTROLS
     // =========================================================================
 
     private fun buildSystemPowerTab(): View {
@@ -1662,29 +2041,18 @@ class MainActivity : Activity(), SensorEventListener {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(10) }
+            ).apply { topMargin = dp(8) }
         }
-
-        val title = TextView(this).apply {
-            text = "SYSTEM POWER & HOST CONTROLS"
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#F8FAFC"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 0, dp(10))
-        }
-        tabRoot.addView(title)
 
         val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         row1.addView(createStyledButton("TV POWER TOGGLE", "#DC2626") {
             hapticTick()
-            sendConsumerKey(0x0030) // Consumer Power
-        }.apply { layoutParams = weightParams(dp(50)) })
-
+            sendConsumerKey(0x0030)
+        }.apply { layoutParams = weightParams(dp(48)) })
         row1.addView(createStyledButton("SYSTEM SLEEP", "#D97706") {
             hapticTick()
-            sendSystemControlKey(0x02) // System Sleep (0x82)
-        }.apply { layoutParams = weightParams(dp(50)) })
+            sendSystemControlKey(0x02)
+        }.apply { layoutParams = weightParams(dp(48)) })
         tabRoot.addView(row1)
 
         val row2 = LinearLayout(this).apply {
@@ -1695,13 +2063,12 @@ class MainActivity : Activity(), SensorEventListener {
         }
         row2.addView(createStyledButton("SYSTEM WAKE UP", "#16A34A") {
             hapticTick()
-            sendSystemControlKey(0x04) // System Wake Up (0x83)
-        }.apply { layoutParams = weightParams(dp(50)) })
-
+            sendSystemControlKey(0x04)
+        }.apply { layoutParams = weightParams(dp(48)) })
         row2.addView(createStyledButton("SYSTEM POWER OFF", "#991B1B") {
             hapticTick()
-            sendSystemControlKey(0x01) // System Power Down (0x81)
-        }.apply { layoutParams = weightParams(dp(50)) })
+            sendSystemControlKey(0x01)
+        }.apply { layoutParams = weightParams(dp(48)) })
         tabRoot.addView(row2)
 
         val row3 = LinearLayout(this).apply {
@@ -1712,13 +2079,12 @@ class MainActivity : Activity(), SensorEventListener {
         }
         row3.addView(createStyledButton("MEDIA SLEEP", "#475569") {
             hapticTick()
-            sendConsumerKey(0x0032) // Consumer Sleep
-        }.apply { layoutParams = weightParams(dp(46)) })
-
+            sendConsumerKey(0x0032)
+        }.apply { layoutParams = weightParams(dp(44)) })
         row3.addView(createStyledButton("LOCK SCREEN", "#475569") {
             hapticTick()
-            sendKeyboardKey(0x08, 0x0F) // GUI (Win/Cmd) + L
-        }.apply { layoutParams = weightParams(dp(46)) })
+            sendKeyboardKey(MOD_LEFT_GUI, 0x0F)
+        }.apply { layoutParams = weightParams(dp(44)) })
         tabRoot.addView(row3)
 
         val row4 = LinearLayout(this).apply {
@@ -1729,208 +2095,195 @@ class MainActivity : Activity(), SensorEventListener {
         }
         row4.addView(createStyledButton("CLOSE APP (ALT+F4)", "#475569") {
             hapticTick()
-            sendKeyboardKey(0x04, 0x3D) // Left Alt + F4
-        }.apply { layoutParams = weightParams(dp(46)) })
-
+            sendKeyboardKey(MOD_LEFT_ALT, 0x3D)
+        }.apply { layoutParams = weightParams(dp(44)) })
         row4.addView(createStyledButton("SWITCH APP (ALT+TAB)", "#475569") {
             hapticTick()
-            sendKeyboardKey(0x04, 0x2B) // Left Alt + Tab
-        }.apply { layoutParams = weightParams(dp(46)) })
+            sendKeyboardKey(MOD_LEFT_ALT, 0x2B)
+        }.apply { layoutParams = weightParams(dp(44)) })
         tabRoot.addView(row4)
 
         return tabRoot
     }
 
     // =========================================================================
-    // LOGO VIEW ("Air Mouse" Custom Logo)
+    // MULTI-FINGER LAPTOP GESTURE TRACKPAD ENGINE
     // =========================================================================
 
-    private fun createLogoView(): View {
-        val resId = resources.getIdentifier("air_mouse_logo", "drawable", packageName)
-        if (resId != 0) {
-            return ImageView(this).apply {
-                setImageResource(resId)
-                scaleType = ImageView.ScaleType.FIT_CENTER
-            }
-        }
-        return object : View(this) {
-            private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor("#0F172A")
-                style = Paint.Style.FILL
-            }
-            private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor("#38BDF8")
-                style = Paint.Style.STROKE
-                strokeWidth = dp(2).toFloat()
-            }
-            private val pointerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor("#38BDF8")
-                style = Paint.Style.FILL
-            }
-            private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.WHITE
-                textAlign = Paint.Align.CENTER
-                typeface = Typeface.DEFAULT_BOLD
-                textSize = dp(7).toFloat()
-            }
-            private val rect = RectF()
-            private val cursorPath = Path()
-
-            override fun onDraw(canvas: Canvas) {
-                super.onDraw(canvas)
-                val w = width.toFloat()
-                val h = height.toFloat()
-                rect.set(dp(2).toFloat(), dp(2).toFloat(), w - dp(2), h - dp(2))
-                canvas.drawRoundRect(rect, dp(10).toFloat(), dp(10).toFloat(), bgPaint)
-                canvas.drawRoundRect(rect, dp(10).toFloat(), dp(10).toFloat(), borderPaint)
-
-                cursorPath.reset()
-                cursorPath.moveTo(w * 0.50f, h * 0.16f)
-                cursorPath.lineTo(w * 0.72f, h * 0.56f)
-                cursorPath.lineTo(w * 0.54f, h * 0.49f)
-                cursorPath.lineTo(w * 0.48f, h * 0.64f)
-                cursorPath.lineTo(w * 0.30f, h * 0.54f)
-                cursorPath.close()
-                canvas.drawPath(cursorPath, pointerPaint)
-
-                canvas.drawText("AIR MOUSE", w * 0.5f, h * 0.86f, textPaint)
-            }
-        }
-    }
-
-    // =========================================================================
-    // GYROSCOPE & ACCELEROMETER MOTION PROCESSING (AIR MOUSE + GAMEPAD STEERING)
-    // =========================================================================
-
-    private fun registerSensors() {
-        sensorManager.unregisterListener(this)
-        if (gyroSensor != null) {
-            sensorManager.registerListener(this, gyroSensor, SensorManager.SENSOR_DELAY_GAME)
-        } else if (accelSensor != null) {
-            sensorManager.registerListener(this, accelSensor, SensorManager.SENSOR_DELAY_GAME)
-        }
-    }
-
-    override fun onSensorChanged(event: SensorEvent?) {
-        if (event == null) return
-
-        // 1. Gamepad Gyro Tilt Steering Mode
-        if (isGamepadGyroSteering) {
-            if (event.sensor.type == Sensor.TYPE_GYROSCOPE) {
-                val steerRate = -event.values[2]
-                leftStickX = (leftStickX + (steerRate * 14f)).roundToInt().coerceIn(-127, 127)
-                sendGamepadReport()
-            } else if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
-                val tiltX = -event.values[0]
-                leftStickX = (tiltX * 18f).roundToInt().coerceIn(-127, 127)
-                sendGamepadReport()
-            }
-        }
-
-        // 2. Air-Mouse Pointer Mode
-        if (!isAirMouseTriggerHeld && !isAirMouseLockedOn) return
-
-        if (event.sensor.type == Sensor.TYPE_GYROSCOPE) {
-            val pitch = event.values[0]
-            val yaw = event.values[2]
-
-            val deadzone = 0.025f
-            val adjYaw = if (abs(yaw) > deadzone) yaw else 0f
-            val adjPitch = if (abs(pitch) > deadzone) pitch else 0f
-
-            val rawDx = (-adjYaw * gyroSensitivity) + residualX
-            val rawDy = (-adjPitch * gyroSensitivity) + residualY
-
-            val intDx = rawDx.roundToInt().coerceIn(-127, 127)
-            val intDy = rawDy.roundToInt().coerceIn(-127, 127)
-
-            residualX = rawDx - intDx
-            residualY = rawDy - intDy
-
-            if (intDx != 0 || intDy != 0) {
-                sendMouseReport(activeMouseButtons, intDx, intDy, 0)
-            }
-        } else if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
-            val ax = event.values[0]
-            val ay = event.values[1]
-            if (!accelCalibrated) {
-                accelBaseX = ax
-                accelBaseY = ay
-                accelCalibrated = true
-                return
-            }
-            val tiltX = -(ax - accelBaseX)
-            val tiltY = (ay - accelBaseY)
-            val deadzone = 0.55f
-            val dx = if (abs(tiltX) > deadzone) (tiltX * (gyroSensitivity * 0.18f)).roundToInt().coerceIn(-127, 127) else 0
-            val dy = if (abs(tiltY) > deadzone) (tiltY * (gyroSensitivity * 0.18f)).roundToInt().coerceIn(-127, 127) else 0
-            if (dx != 0 || dy != 0) {
-                sendMouseReport(activeMouseButtons, dx, dy, 0)
-            }
-        }
-    }
-
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-
-    // =========================================================================
-    // TRACKPAD & SCROLL STRIP HANDLERS (AUTO SCROLL-LOCK)
-    // =========================================================================
-
-    private fun setScrollLockActive(locked: Boolean) {
+    private fun setScrollLockActive(locked: Boolean, statusLabel: String? = null) {
         rootScrollView.isScrollLocked = locked
         if (locked) {
-            touchpadView.background = roundedBox("#1E293B", dp(12), "#38BDF8")
-            touchpadView.text = "TRACKPAD ACTIVE (SCROLL LOCKED)\nMoving TV Cursor..."
+            touchpadView.background = roundedBox("#1E293B", dp(14), "#38BDF8")
+            touchpadView.text = statusLabel ?: "TRACKPAD ACTIVE (SCROLL LOCKED)"
             touchpadView.setTextColor(Color.parseColor("#38BDF8"))
         } else {
-            touchpadView.background = roundedBox("#1E293B", dp(12), "#334155")
-            touchpadView.text = "TRACKPAD (AUTO SCROLL-LOCK)\nSlide to move pointer • Tap for Left Click"
+            touchpadView.background = roundedBox("#1E293B", dp(14), "#334155")
+            touchpadView.text = "MULTI-GESTURE TRACKPAD (SCROLL LOCKED)\n" +
+                "• 1 Finger: Move & Tap (Left Click)\n" +
+                "• 2 Fingers: Tap (Right Click), V/H Scroll & Pinch Zoom\n" +
+                "• 3 Fingers: Swipe Left/Right (Back/Fwd), Up/Down (Apps/Home)"
             touchpadView.setTextColor(Color.parseColor("#94A3B8"))
         }
     }
 
-    private fun handleTouchpadEvent(view: View, event: MotionEvent): Boolean {
+    private fun handleMultiGestureTouchpad(view: View, event: MotionEvent): Boolean {
+        val count = event.pointerCount
+        if (count > maxPointersInGesture) {
+            maxPointersInGesture = count
+        }
+
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                setScrollLockActive(true)
+                setScrollLockActive(true, "1-FINGER CURSOR ACTIVE")
                 view.parent?.requestDisallowInterceptTouchEvent(true)
-                lastTouchX = event.x
-                lastTouchY = event.y
-                touchDownTime = System.currentTimeMillis()
-                touchMovedDistance = 0f
+                maxPointersInGesture = 1
+                gestureStartTime = System.currentTimeMillis()
+                lastSingleX = event.x
+                lastSingleY = event.y
+                singleMovedDist = 0f
+                twoFingerMovedDist = 0f
+                threeGestureFired = false
                 return true
             }
-            MotionEvent.ACTION_MOVE -> {
-                rootScrollView.isScrollLocked = true
-                view.parent?.requestDisallowInterceptTouchEvent(true)
-                val dxFloat = (event.x - lastTouchX) * 1.4f
-                val dyFloat = (event.y - lastTouchY) * 1.4f
-                lastTouchX = event.x
-                lastTouchY = event.y
 
-                touchMovedDistance += abs(dxFloat) + abs(dyFloat)
-                val dx = dxFloat.roundToInt().coerceIn(-127, 127)
-                val dy = dyFloat.roundToInt().coerceIn(-127, 127)
-                if (dx != 0 || dy != 0) {
-                    sendMouseReport(activeMouseButtons, dx, dy, 0)
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                view.parent?.requestDisallowInterceptTouchEvent(true)
+                if (count == 2) {
+                    lastTwoCenterX = (event.getX(0) + event.getX(1)) * 0.5f
+                    lastTwoCenterY = (event.getY(0) + event.getY(1)) * 0.5f
+                    lastPinchSpan = hypot(
+                        (event.getX(1) - event.getX(0)).toDouble(),
+                        (event.getY(1) - event.getY(0)).toDouble()
+                    ).toFloat()
+                    setScrollLockActive(true, "2-FINGER SCROLL / PINCH ZOOM")
+                } else if (count >= 3) {
+                    threeStartX = (event.getX(0) + event.getX(1) + event.getX(2)) / 3f
+                    threeStartY = (event.getY(0) + event.getY(1) + event.getY(2)) / 3f
+                    threeGestureFired = false
+                    setScrollLockActive(true, "3-FINGER SWIPE NAVIGATION")
                 }
                 return true
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                setScrollLockActive(false)
-                view.parent?.requestDisallowInterceptTouchEvent(false)
-                if (event.actionMasked == MotionEvent.ACTION_UP) {
-                    val elapsed = System.currentTimeMillis() - touchDownTime
-                    if (elapsed < 220 && touchMovedDistance < dp(10)) {
+
+            MotionEvent.ACTION_MOVE -> {
+                rootScrollView.isScrollLocked = true
+                view.parent?.requestDisallowInterceptTouchEvent(true)
+
+                if (count == 1 && maxPointersInGesture == 1) {
+                    // 1-Finger Cursor Movement
+                    val dxFloat = (event.x - lastSingleX) * 1.45f
+                    val dyFloat = (event.y - lastSingleY) * 1.45f
+                    lastSingleX = event.x
+                    lastSingleY = event.y
+
+                    singleMovedDist += abs(dxFloat) + abs(dyFloat)
+                    val dx = dxFloat.roundToInt().coerceIn(-127, 127)
+                    val dy = dyFloat.roundToInt().coerceIn(-127, 127)
+                    if (dx != 0 || dy != 0) {
+                        sendMouseReport(activeMouseButtons, dx, dy, 0, 0)
+                    }
+                } else if (count == 2 && maxPointersInGesture == 2) {
+                    // 2-Finger Gestures: Pinch-to-Zoom OR Vertical/Horizontal Two-Finger Scroll
+                    val cx = (event.getX(0) + event.getX(1)) * 0.5f
+                    val cy = (event.getY(0) + event.getY(1)) * 0.5f
+                    val span = hypot(
+                        (event.getX(1) - event.getX(0)).toDouble(),
+                        (event.getY(1) - event.getY(0)).toDouble()
+                    ).toFloat()
+
+                    val dSpan = span - lastPinchSpan
+                    val dx = cx - lastTwoCenterX
+                    val dy = cy - lastTwoCenterY
+                    twoFingerMovedDist += abs(dx) + abs(dy) + abs(dSpan)
+
+                    if (prefPinchToZoom && abs(dSpan) > dp(18) && abs(dSpan) > (abs(dx) + abs(dy)) * 1.15f) {
+                        // Pinch-to-Zoom -> Ctrl + Mouse Wheel
+                        val zoomDir = if (dSpan > 0) 1 else -1
+                        sendPinchZoomStep(zoomDir)
+                        lastPinchSpan = span
+                        lastTwoCenterX = cx
+                        lastTwoCenterY = cy
+                    } else {
+                        // 2-Finger Vertical & Horizontal Scroll
+                        if (prefTwoFingerVertScroll && abs(dy) > dp(11) && abs(dy) >= abs(dx)) {
+                            val wheelV = if (dy > 0) 1 else -1 // Natural laptop two-finger vertical scroll
+                            sendMouseReport(activeMouseButtons, 0, 0, wheelV, 0)
+                            lastTwoCenterY = cy
+                            lastPinchSpan = span
+                        } else if (prefTwoFingerHorizScroll && abs(dx) > dp(11) && abs(dx) > abs(dy)) {
+                            val panH = if (dx > 0) -1 else 1
+                            sendMouseReport(activeMouseButtons, 0, 0, 0, panH)
+                            lastTwoCenterX = cx
+                            lastPinchSpan = span
+                        }
+                    }
+                } else if (count >= 3 && prefThreeFingerSwipeNav && !threeGestureFired) {
+                    // 3-Finger Laptop Swipes: Left = Back, Right = Forward, Up = App Switcher, Down = Home
+                    val cx = (event.getX(0) + event.getX(1) + event.getX(2)) / 3f
+                    val cy = (event.getY(0) + event.getY(1) + event.getY(2)) / 3f
+                    val dx = cx - threeStartX
+                    val dy = cy - threeStartY
+                    val threshold = dp(42)
+
+                    if (abs(dx) > threshold && abs(dx) > abs(dy)) {
+                        threeGestureFired = true
                         hapticTick()
-                        sendMouseReport(1, 0, 0, 0)
-                        sendMouseReport(0, 0, 0, 0)
+                        if (dx < 0) {
+                            // 3-Finger Swipe Left -> Navigate Back
+                            sendConsumerKey(0x0224) // AC Back
+                        } else {
+                            // 3-Finger Swipe Right -> Navigate Forward
+                            sendConsumerKey(0x0225) // AC Forward
+                        }
+                    } else if (abs(dy) > threshold && abs(dy) > abs(dx)) {
+                        threeGestureFired = true
+                        hapticTick()
+                        if (dy < 0) {
+                            // 3-Finger Swipe Up -> App Switcher / Multitasking
+                            sendKeyboardKey(MOD_LEFT_ALT, 0x2B)
+                        } else {
+                            // 3-Finger Swipe Down -> TV Home
+                            sendConsumerKey(0x0223)
+                        }
                     }
                 }
                 return true
             }
+
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                setScrollLockActive(false)
+                view.parent?.requestDisallowInterceptTouchEvent(false)
+
+                if (event.actionMasked == MotionEvent.ACTION_UP) {
+                    val elapsed = System.currentTimeMillis() - gestureStartTime
+                    if (maxPointersInGesture == 1 && elapsed < 230 && singleMovedDist < dp(10)) {
+                        // 1-Finger Tap -> Left Click
+                        hapticTick()
+                        sendMouseReport(1, 0, 0, 0, 0)
+                        sendMouseReport(0, 0, 0, 0, 0)
+                    } else if (maxPointersInGesture == 2 && prefTwoFingerTapRightClick && elapsed < 260 && twoFingerMovedDist < dp(16)) {
+                        // 2-Finger Tap -> Right Click
+                        hapticTick()
+                        sendMouseReport(2, 0, 0, 0, 0)
+                        sendMouseReport(0, 0, 0, 0, 0)
+                    }
+                }
+                maxPointersInGesture = 0
+                return true
+            }
         }
-        return false
+        return true
+    }
+
+    private fun sendPinchZoomStep(wheelStep: Int) {
+        val hid = hidDevice ?: return
+        val target = connectedDevice ?: return
+        // Hold Left Ctrl (0x01) + Scroll Wheel, then release Left Ctrl
+        val ctrlDown = byteArrayOf(MOD_LEFT_CTRL.toByte(), 0, 0, 0, 0, 0, 0, 0)
+        val ctrlUp = byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0)
+        hid.sendReport(target, REPORT_ID_KEYBOARD, ctrlDown)
+        sendMouseReport(0, 0, 0, wheelStep, 0)
+        hid.sendReport(target, REPORT_ID_KEYBOARD, ctrlUp)
     }
 
     private fun handleScrollStripEvent(view: View, event: MotionEvent): Boolean {
@@ -1948,7 +2301,7 @@ class MainActivity : Activity(), SensorEventListener {
                 if (abs(dy) > dp(12)) {
                     val wheelStep = if (dy > 0) -1 else 1
                     lastScrollY = event.y
-                    sendMouseReport(activeMouseButtons, 0, 0, wheelStep)
+                    sendMouseReport(activeMouseButtons, 0, 0, wheelStep, 0)
                 }
                 return true
             }
@@ -1962,300 +2315,40 @@ class MainActivity : Activity(), SensorEventListener {
     }
 
     // =========================================================================
-    // BLUETOOTH HID PROFILE, MULTI-DEVICE INSTANT SWITCHING, RESET & UNPAIR
+    // HARDWARE VOLUME UP/DOWN BUTTONS AS LEFT/RIGHT MOUSE CLICKS
     // =========================================================================
-
-    private fun initHidProfile() {
-        val adapter = bluetoothAdapter ?: return
-        if (!adapter.isEnabled) {
-            statusBadge.text = "Status: Please enable Bluetooth"
-            return
-        }
-        if (hidDevice != null) return
-
-        adapter.getProfileProxy(this, object : BluetoothProfile.ServiceListener {
-            override fun onServiceConnected(profile: Int, proxy: BluetoothProfile?) {
-                if (profile != BluetoothProfile.HID_DEVICE) return
-                val hid = proxy as? BluetoothHidDevice ?: return
-                hidDevice = hid
-
-                val sdpSettings = BluetoothHidDeviceAppSdpSettings(
-                    "Air Mouse",
-                    "Air Mouse, Media, Gamepad & Keyboard by AXVin",
-                    "AXVin",
-                    BluetoothHidDevice.SUBCLASS1_COMBO,
-                    HID_REPORT_DESCRIPTOR
-                )
-
-                val qosOut = BluetoothHidDeviceAppQosSettings(
-                    BluetoothHidDeviceAppQosSettings.SERVICE_BEST_EFFORT,
-                    800, 9, 0, 11250, BluetoothHidDeviceAppQosSettings.MAX
-                )
-
-                hid.registerApp(sdpSettings, null, qosOut, hidExecutor, object : BluetoothHidDevice.Callback() {
-                    override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
-                        runOnUiThread {
-                            if (registered) {
-                                statusBadge.text = "Status: HID Ready — Select or Tap a Device"
-                                statusBadge.setTextColor(Color.parseColor("#38BDF8"))
-                                if (pluggedDevice != null) {
-                                    switchToDeviceInstantly(pluggedDevice)
-                                }
-                            } else {
-                                statusBadge.text = "Status: HID Service Stopped"
-                            }
-                        }
-                    }
-
-                    override fun onConnectionStateChanged(device: BluetoothDevice?, state: Int) {
-                        runOnUiThread {
-                            when (state) {
-                                BluetoothProfile.STATE_CONNECTED -> {
-                                    connectedDevice = device
-                                    statusBadge.text = "Connected: ${device?.name ?: "Device"}"
-                                    statusBadge.setTextColor(Color.parseColor("#4ADE80"))
-                                    hapticTick()
-                                    rebuildQuickSwitchChips()
-                                }
-                                BluetoothProfile.STATE_CONNECTING -> {
-                                    statusBadge.text = "Connecting to ${device?.name ?: "Device"}..."
-                                    statusBadge.setTextColor(Color.parseColor("#FACC15"))
-                                }
-                                BluetoothProfile.STATE_DISCONNECTED -> {
-                                    if (connectedDevice == device) connectedDevice = null
-                                    statusBadge.text = "Disconnected — Select Device or Tap Reset"
-                                    statusBadge.setTextColor(Color.parseColor("#F87171"))
-                                    rebuildQuickSwitchChips()
-                                }
-                            }
-                        }
-                    }
-                })
-            }
-
-            override fun onServiceDisconnected(profile: Int) {
-                if (profile == BluetoothProfile.HID_DEVICE) {
-                    hidDevice = null
-                }
-            }
-        }, BluetoothProfile.HID_DEVICE)
-    }
-
-    private fun refreshPairedDevices() {
-        val bonded = bluetoothAdapter?.bondedDevices ?: emptySet()
-        pairedDevicesList.clear()
-        pairedDevicesList.addAll(bonded)
-
-        val names = if (pairedDevicesList.isEmpty()) {
-            listOf("No Paired Devices (Tap 'Pair New')")
-        } else {
-            pairedDevicesList.map { "${it.name ?: "Unknown"} (${it.address})" }
-        }
-        isUserSelectingDevice = false
-        deviceAdapter.clear()
-        deviceAdapter.addAll(names)
-        deviceAdapter.notifyDataSetChanged()
-
-        rebuildQuickSwitchChips()
-    }
-
-    /**
-     * Builds one-tap instant switch buttons for every paired Bluetooth device
-     * so the user can jump between multiple TVs/devices immediately.
-     */
-    private fun rebuildQuickSwitchChips() {
-        quickSwitchRow.removeAllViews()
-        if (pairedDevicesList.isEmpty()) return
-
-        pairedDevicesList.forEachIndexed { index, device ->
-            val isCurrent = connectedDevice?.address == device.address
-            val chipColor = if (isCurrent) "#16A34A" else "#0F172A"
-            val chipStroke = if (isCurrent) "#4ADE80" else "#475569"
-            val chipBtn = Button(this).apply {
-                text = if (isCurrent) "● ${device.name ?: "Device"}" else (device.name ?: "Device")
-                setTextColor(Color.WHITE)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
-                typeface = Typeface.DEFAULT_BOLD
-                background = roundedBox(chipColor, dp(16), chipStroke)
-                setPadding(dp(12), dp(4), dp(12), dp(4))
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    dp(32)
-                ).apply { marginEnd = dp(6) }
-                setOnClickListener {
-                    hapticTick()
-                    isUserSelectingDevice = false
-                    deviceSpinner.setSelection(index)
-                    switchToDeviceInstantly(device)
-                }
-            }
-            quickSwitchRow.addView(chipBtn)
-        }
-    }
-
-    /**
-     * Instantly disconnects from any previously connected HID host and connects
-     * to the newly chosen target Bluetooth device.
-     */
-    private fun switchToDeviceInstantly(targetDevice: BluetoothDevice) {
-        val hid = hidDevice
-        if (hid == null) {
-            Toast.makeText(this, "HID initializing, re-registering...", Toast.LENGTH_SHORT).show()
-            initHidProfile()
-            return
-        }
-        val prev = connectedDevice
-        if (prev != null && prev.address != targetDevice.address) {
-            try {
-                hid.disconnect(prev)
-            } catch (_: Exception) {
-            }
-        }
-        connectedDevice = targetDevice
-        hid.connect(targetDevice)
-        rebuildQuickSwitchChips()
-    }
-
-    /**
-     * Resets the Bluetooth HID profile proxy and reconnects to the selected device.
-     */
-    private fun resetHidConnection() {
-        hapticTick()
-        statusBadge.text = "Resetting Bluetooth HID connection..."
-        statusBadge.setTextColor(Color.parseColor("#FACC15"))
-        try {
-            connectedDevice?.let { hidDevice?.disconnect(it) }
-            hidDevice?.unregisterApp()
-            bluetoothAdapter?.closeProfileProxy(BluetoothProfile.HID_DEVICE, hidDevice)
-        } catch (_: Exception) {
-        }
-        hidDevice = null
-        connectedDevice = null
-        refreshPairedDevices()
-        initHidProfile()
-        Toast.makeText(this, "Bluetooth HID connection reset", Toast.LENGTH_SHORT).show()
-    }
-
-    /**
-     * Unpairs (removes bond) and disconnects the currently selected or connected device.
-     */
-    private fun unpairCurrentDevice() {
-        hapticTick()
-        val idx = deviceSpinner.selectedItemPosition
-        val target = connectedDevice ?: pairedDevicesList.getOrNull(idx)
-        if (target == null) {
-            Toast.makeText(this, "No paired device selected to unpair", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        try {
-            hidDevice?.disconnect(target)
-        } catch (_: Exception) {
-        }
-
-        val removed = try {
-            val method = target.javaClass.getMethod("removeBond")
-            method.invoke(target) as? Boolean ?: false
-        } catch (_: Exception) {
-            false
-        }
-
-        if (removed) {
-            Toast.makeText(this, "Unpaired ${target.name ?: target.address}", Toast.LENGTH_SHORT).show()
-            connectedDevice = null
-            statusBadge.text = "Unpaired ${target.name ?: "Device"}"
-            statusBadge.setTextColor(Color.parseColor("#F87171"))
-            window.decorView.postDelayed({ refreshPairedDevices() }, 600)
-        } else {
-            Toast.makeText(this, "Opening Bluetooth settings to finish unpairing ${target.name ?: ""}", Toast.LENGTH_SHORT).show()
-            startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS))
-        }
-    }
-
-    // =========================================================================
-    // HID REPORT SENDERS (KEYBOARD, MOUSE, CONSUMER MEDIA, GAMEPAD, SYSTEM)
-    // =========================================================================
-
-    private fun sendMouseReport(buttons: Int, dx: Int, dy: Int, wheel: Int) {
-        val hid = hidDevice ?: return
-        val target = connectedDevice ?: return
-        val report = byteArrayOf(
-            buttons.toByte(),
-            dx.coerceIn(-127, 127).toByte(),
-            dy.coerceIn(-127, 127).toByte(),
-            wheel.coerceIn(-127, 127).toByte()
-        )
-        hid.sendReport(target, REPORT_ID_MOUSE, report)
-    }
-
-    private fun sendKeyboardKey(modifier: Int, hidUsageCode: Int) {
-        val hid = hidDevice ?: return
-        val target = connectedDevice ?: return
-        val downReport = byteArrayOf(
-            modifier.toByte(),
-            0x00,
-            hidUsageCode.toByte(),
-            0x00, 0x00, 0x00, 0x00, 0x00
-        )
-        val upReport = byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0)
-        hid.sendReport(target, REPORT_ID_KEYBOARD, downReport)
-        hid.sendReport(target, REPORT_ID_KEYBOARD, upReport)
-    }
-
-    private fun sendConsumerKey(usage16Bit: Int) {
-        val hid = hidDevice ?: return
-        val target = connectedDevice ?: return
-        val low = (usage16Bit and 0xFF).toByte()
-        val high = ((usage16Bit shr 8) and 0xFF).toByte()
-        val downReport = byteArrayOf(low, high)
-        val upReport = byteArrayOf(0x00, 0x00)
-        hid.sendReport(target, REPORT_ID_CONSUMER, downReport)
-        hid.sendReport(target, REPORT_ID_CONSUMER, upReport)
-    }
-
-    private fun sendGamepadReport() {
-        val hid = hidDevice ?: return
-        val target = connectedDevice ?: return
-        val btnLow = (gamepadButtonMask and 0xFF).toByte()
-        val btnHigh = ((gamepadButtonMask shr 8) and 0xFF).toByte()
-        val report = byteArrayOf(
-            btnLow,
-            btnHigh,
-            gamepadHatState.toByte(),
-            leftStickX.coerceIn(-127, 127).toByte(),
-            leftStickY.coerceIn(-127, 127).toByte(),
-            rightStickX.coerceIn(-127, 127).toByte(),
-            rightStickY.coerceIn(-127, 127).toByte()
-        )
-        hid.sendReport(target, REPORT_ID_GAMEPAD, report)
-    }
-
-    private fun sendSystemControlKey(bitMask: Int) {
-        val hid = hidDevice ?: return
-        val target = connectedDevice ?: return
-        hid.sendReport(target, REPORT_ID_SYSTEM, byteArrayOf(bitMask.toByte()))
-        hid.sendReport(target, REPORT_ID_SYSTEM, byteArrayOf(0x00))
-    }
-
-    // =========================================================================
-    // REAL-TIME KEYPRESS SENDER
-    // =========================================================================
-
-    private fun resetLiveInputBuffer() {
-        isResettingLiveInput = true
-        liveKeyboardInput.setText(SENTINEL_CHAR)
-        liveKeyboardInput.setSelection(liveKeyboardInput.text.length)
-        isResettingLiveInput = false
-    }
-
-    private fun sendCharImmediate(ch: Char) {
-        val (mod, code) = charToHidUsage(ch)
-        if (code != 0) {
-            sendKeyboardKey(mod, code)
-        }
-    }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // 1. Intercept Hardware Volume Up / Down as Left / Right Mouse Clicks when enabled in Settings
+        if (prefVolumeButtonsAsMouse &&
+            (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP || event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)
+        ) {
+            val isVolUp = event.keyCode == KeyEvent.KEYCODE_VOLUME_UP
+            val buttonBit = if (!prefInvertVolumeButtons) {
+                if (isVolUp) 1 else 2 // Default: Volume Up = Left Click (1), Volume Down = Right Click (2)
+            } else {
+                if (isVolUp) 2 else 1 // Inverted: Volume Up = Right Click (2), Volume Down = Left Click (1)
+            }
+
+            when (event.action) {
+                KeyEvent.ACTION_DOWN -> {
+                    if (event.repeatCount == 0) {
+                        hapticTick()
+                        activeMouseButtons = activeMouseButtons or buttonBit
+                        sendMouseReport(activeMouseButtons, 0, 0, 0, 0)
+                    }
+                    return true
+                }
+                KeyEvent.ACTION_UP -> {
+                    activeMouseButtons = activeMouseButtons and buttonBit.inv()
+                    sendMouseReport(activeMouseButtons, 0, 0, 0, 0)
+                    return true
+                }
+            }
+            return true
+        }
+
+        // 2. Standard Keyboard Key Passthrough
         if (event.action == KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
                 KeyEvent.KEYCODE_DEL -> {
@@ -2292,46 +2385,396 @@ class MainActivity : Activity(), SensorEventListener {
         return super.dispatchKeyEvent(event)
     }
 
+    // =========================================================================
+    // GYROSCOPE & ACCELEROMETER MOTION PROCESSING
+    // =========================================================================
+
+    private fun registerSensors() {
+        sensorManager.unregisterListener(this)
+        if (gyroSensor != null) {
+            sensorManager.registerListener(this, gyroSensor, SensorManager.SENSOR_DELAY_GAME)
+        } else if (accelSensor != null) {
+            sensorManager.registerListener(this, accelSensor, SensorManager.SENSOR_DELAY_GAME)
+        }
+    }
+
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event == null) return
+
+        if (isGamepadGyroSteering) {
+            if (event.sensor.type == Sensor.TYPE_GYROSCOPE) {
+                val steerRate = -event.values[2]
+                leftStickX = (leftStickX + (steerRate * 14f)).roundToInt().coerceIn(-127, 127)
+                sendGamepadReport()
+            } else if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
+                val tiltX = event.values[1] // In landscape orientation, Y axis is left/right tilt
+                leftStickX = (tiltX * 18f).roundToInt().coerceIn(-127, 127)
+                sendGamepadReport()
+            }
+        }
+
+        if (!isAirMouseTriggerHeld && !isAirMouseLockedOn) return
+
+        if (event.sensor.type == Sensor.TYPE_GYROSCOPE) {
+            val pitch = event.values[0]
+            val yaw = event.values[2]
+
+            val deadzone = 0.025f
+            val adjYaw = if (abs(yaw) > deadzone) yaw else 0f
+            val adjPitch = if (abs(pitch) > deadzone) pitch else 0f
+
+            val rawDx = (-adjYaw * gyroSensitivity) + residualX
+            val rawDy = (-adjPitch * gyroSensitivity) + residualY
+
+            val intDx = rawDx.roundToInt().coerceIn(-127, 127)
+            val intDy = rawDy.roundToInt().coerceIn(-127, 127)
+
+            residualX = rawDx - intDx
+            residualY = rawDy - intDy
+
+            if (intDx != 0 || intDy != 0) {
+                sendMouseReport(activeMouseButtons, intDx, intDy, 0, 0)
+            }
+        } else if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
+            val ax = event.values[0]
+            val ay = event.values[1]
+            if (!accelCalibrated) {
+                accelBaseX = ax
+                accelBaseY = ay
+                accelCalibrated = true
+                return
+            }
+            val tiltX = -(ax - accelBaseX)
+            val tiltY = (ay - accelBaseY)
+            val deadzone = 0.55f
+            val dx = if (abs(tiltX) > deadzone) (tiltX * (gyroSensitivity * 0.18f)).roundToInt().coerceIn(-127, 127) else 0
+            val dy = if (abs(tiltY) > deadzone) (tiltY * (gyroSensitivity * 0.18f)).roundToInt().coerceIn(-127, 127) else 0
+            if (dx != 0 || dy != 0) {
+                sendMouseReport(activeMouseButtons, dx, dy, 0, 0)
+            }
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+    // =========================================================================
+    // BLUETOOTH HID PROFILE & AUTO-COLLAPSING CONNECTION CARD
+    // =========================================================================
+
+    private fun initHidProfile() {
+        val adapter = bluetoothAdapter ?: return
+        if (!adapter.isEnabled) {
+            connectionHeaderStatus.text = "🔴 Bluetooth Disabled — Tap to Enable"
+            return
+        }
+        if (hidDevice != null) return
+
+        adapter.getProfileProxy(this, object : BluetoothProfile.ServiceListener {
+            override fun onServiceConnected(profile: Int, proxy: BluetoothProfile?) {
+                if (profile != BluetoothProfile.HID_DEVICE) return
+                val hid = proxy as? BluetoothHidDevice ?: return
+                hidDevice = hid
+
+                val sdpSettings = BluetoothHidDeviceAppSdpSettings(
+                    "Air Mouse",
+                    "Air Mouse, Keyboard, Media & Gamepad by AXVin",
+                    "AXVin",
+                    BluetoothHidDevice.SUBCLASS1_COMBO,
+                    HID_REPORT_DESCRIPTOR
+                )
+
+                val qosOut = BluetoothHidDeviceAppQosSettings(
+                    BluetoothHidDeviceAppQosSettings.SERVICE_BEST_EFFORT,
+                    800, 9, 0, 11250, BluetoothHidDeviceAppQosSettings.MAX
+                )
+
+                hid.registerApp(sdpSettings, null, qosOut, hidExecutor, object : BluetoothHidDevice.Callback() {
+                    override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
+                        runOnUiThread {
+                            if (registered) {
+                                connectionHeaderStatus.text = "🔵 HID Ready — Select a Paired Device"
+                                connectionHeaderStatus.setTextColor(Color.parseColor("#38BDF8"))
+                                if (pluggedDevice != null) {
+                                    switchToDeviceInstantly(pluggedDevice)
+                                }
+                            } else {
+                                connectionHeaderStatus.text = "⚪ HID Service Stopped"
+                            }
+                        }
+                    }
+
+                    override fun onConnectionStateChanged(device: BluetoothDevice?, state: Int) {
+                        runOnUiThread {
+                            when (state) {
+                                BluetoothProfile.STATE_CONNECTED -> {
+                                    connectedDevice = device
+                                    connectionHeaderStatus.text = "🟢 Connected: ${device?.name ?: "TV"}"
+                                    connectionHeaderStatus.setTextColor(Color.parseColor("#4ADE80"))
+                                    hapticTick()
+                                    rebuildQuickSwitchChips()
+                                    // Automatically collapse the Connection Panel when a device connects
+                                    setConnectionCardExpanded(false)
+                                }
+                                BluetoothProfile.STATE_CONNECTING -> {
+                                    connectionHeaderStatus.text = "🟡 Connecting to ${device?.name ?: "Device"}..."
+                                    connectionHeaderStatus.setTextColor(Color.parseColor("#FACC15"))
+                                }
+                                BluetoothProfile.STATE_DISCONNECTED -> {
+                                    if (connectedDevice == device) connectedDevice = null
+                                    connectionHeaderStatus.text = "🔴 Disconnected — Tap to Connect"
+                                    connectionHeaderStatus.setTextColor(Color.parseColor("#F87171"))
+                                    rebuildQuickSwitchChips()
+                                    setConnectionCardExpanded(true)
+                                }
+                            }
+                        }
+                    }
+                })
+            }
+
+            override fun onServiceDisconnected(profile: Int) {
+                if (profile == BluetoothProfile.HID_DEVICE) {
+                    hidDevice = null
+                }
+            }
+        }, BluetoothProfile.HID_DEVICE)
+    }
+
+    private fun refreshPairedDevices() {
+        val bonded = bluetoothAdapter?.bondedDevices ?: emptySet()
+        pairedDevicesList.clear()
+        pairedDevicesList.addAll(bonded)
+
+        val names = if (pairedDevicesList.isEmpty()) {
+            listOf("No Paired Devices (Tap 'Pair New')")
+        } else {
+            pairedDevicesList.map { "${it.name ?: "Unknown"} (${it.address})" }
+        }
+        isUserSelectingDevice = false
+        deviceAdapter.clear()
+        deviceAdapter.addAll(names)
+        deviceAdapter.notifyDataSetChanged()
+
+        rebuildQuickSwitchChips()
+    }
+
+    private fun rebuildQuickSwitchChips() {
+        quickSwitchRow.removeAllViews()
+        if (pairedDevicesList.isEmpty()) return
+
+        pairedDevicesList.forEachIndexed { index, device ->
+            val isCurrent = connectedDevice?.address == device.address
+            val chipColor = if (isCurrent) "#16A34A" else "#0F172A"
+            val chipStroke = if (isCurrent) "#4ADE80" else "#475569"
+            val chipBtn = Button(this).apply {
+                text = if (isCurrent) "● ${device.name ?: "Device"}" else (device.name ?: "Device")
+                setTextColor(Color.WHITE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                typeface = Typeface.DEFAULT_BOLD
+                background = roundedBox(chipColor, dp(14), chipStroke)
+                setPadding(dp(10), dp(3), dp(10), dp(3))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    dp(30)
+                ).apply { marginEnd = dp(6) }
+                setOnClickListener {
+                    hapticTick()
+                    isUserSelectingDevice = false
+                    deviceSpinner.setSelection(index)
+                    switchToDeviceInstantly(device)
+                }
+            }
+            quickSwitchRow.addView(chipBtn)
+        }
+    }
+
+    private fun switchToDeviceInstantly(targetDevice: BluetoothDevice) {
+        val hid = hidDevice
+        if (hid == null) {
+            Toast.makeText(this, "HID initializing, re-registering...", Toast.LENGTH_SHORT).show()
+            initHidProfile()
+            return
+        }
+        val prev = connectedDevice
+        if (prev != null && prev.address != targetDevice.address) {
+            try {
+                hid.disconnect(prev)
+            } catch (_: Exception) {
+            }
+        }
+        connectedDevice = targetDevice
+        hid.connect(targetDevice)
+        rebuildQuickSwitchChips()
+    }
+
+    private fun resetHidConnection() {
+        hapticTick()
+        connectionHeaderStatus.text = "🟡 Resetting Bluetooth HID..."
+        connectionHeaderStatus.setTextColor(Color.parseColor("#FACC15"))
+        try {
+            connectedDevice?.let { hidDevice?.disconnect(it) }
+            hidDevice?.unregisterApp()
+            bluetoothAdapter?.closeProfileProxy(BluetoothProfile.HID_DEVICE, hidDevice)
+        } catch (_: Exception) {
+        }
+        hidDevice = null
+        connectedDevice = null
+        refreshPairedDevices()
+        initHidProfile()
+        Toast.makeText(this, "Bluetooth HID connection reset", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun unpairCurrentDevice() {
+        hapticTick()
+        val idx = deviceSpinner.selectedItemPosition
+        val target = connectedDevice ?: pairedDevicesList.getOrNull(idx)
+        if (target == null) {
+            Toast.makeText(this, "No paired device selected to unpair", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        try {
+            hidDevice?.disconnect(target)
+        } catch (_: Exception) {
+        }
+
+        val removed = try {
+            val method = target.javaClass.getMethod("removeBond")
+            method.invoke(target) as? Boolean ?: false
+        } catch (_: Exception) {
+            false
+        }
+
+        if (removed) {
+            Toast.makeText(this, "Unpaired ${target.name ?: target.address}", Toast.LENGTH_SHORT).show()
+            connectedDevice = null
+            connectionHeaderStatus.text = "🔴 Unpaired ${target.name ?: "Device"}"
+            connectionHeaderStatus.setTextColor(Color.parseColor("#F87171"))
+            window.decorView.postDelayed({ refreshPairedDevices() }, 600)
+        } else {
+            Toast.makeText(this, "Opening Bluetooth settings to unpair ${target.name ?: ""}", Toast.LENGTH_SHORT).show()
+            startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS))
+        }
+    }
+
+    // =========================================================================
+    // HID REPORT SENDERS
+    // =========================================================================
+
+    private fun sendMouseReport(buttons: Int, dx: Int, dy: Int, wheel: Int, panH: Int = 0) {
+        val hid = hidDevice ?: return
+        val target = connectedDevice ?: return
+        val report = byteArrayOf(
+            buttons.toByte(),
+            dx.coerceIn(-127, 127).toByte(),
+            dy.coerceIn(-127, 127).toByte(),
+            wheel.coerceIn(-127, 127).toByte(),
+            panH.coerceIn(-127, 127).toByte()
+        )
+        hid.sendReport(target, REPORT_ID_MOUSE, report)
+    }
+
+    private fun sendKeyboardKey(modifier: Int, hidUsageCode: Int) {
+        val hid = hidDevice ?: return
+        val target = connectedDevice ?: return
+        val downReport = byteArrayOf(
+            modifier.toByte(),
+            0x00,
+            hidUsageCode.toByte(),
+            0x00, 0x00, 0x00, 0x00, 0x00
+        )
+        val upReport = byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0)
+        hid.sendReport(target, REPORT_ID_KEYBOARD, downReport)
+        hid.sendReport(target, REPORT_ID_KEYBOARD, upReport)
+    }
+
+    private fun sendConsumerKey(usage16Bit: Int) {
+        val hid = hidDevice ?: return
+        val target = connectedDevice ?: return
+        val low = (usage16Bit and 0xFF).toByte()
+        val high = ((usage16Bit shr 8) and 0xFF).toByte()
+        hid.sendReport(target, REPORT_ID_CONSUMER, byteArrayOf(low, high))
+        hid.sendReport(target, REPORT_ID_CONSUMER, byteArrayOf(0x00, 0x00))
+    }
+
+    private fun sendGamepadReport() {
+        val hid = hidDevice ?: return
+        val target = connectedDevice ?: return
+        val btnLow = (gamepadButtonMask and 0xFF).toByte()
+        val btnHigh = ((gamepadButtonMask shr 8) and 0xFF).toByte()
+        val report = byteArrayOf(
+            btnLow,
+            btnHigh,
+            gamepadHatState.toByte(),
+            leftStickX.coerceIn(-127, 127).toByte(),
+            leftStickY.coerceIn(-127, 127).toByte(),
+            rightStickX.coerceIn(-127, 127).toByte(),
+            rightStickY.coerceIn(-127, 127).toByte()
+        )
+        hid.sendReport(target, REPORT_ID_GAMEPAD, report)
+    }
+
+    private fun sendSystemControlKey(bitMask: Int) {
+        val hid = hidDevice ?: return
+        val target = connectedDevice ?: return
+        hid.sendReport(target, REPORT_ID_SYSTEM, byteArrayOf(bitMask.toByte()))
+        hid.sendReport(target, REPORT_ID_SYSTEM, byteArrayOf(0x00))
+    }
+
+    private fun resetLiveInputBuffer() {
+        isResettingLiveInput = true
+        liveKeyboardInput.setText(SENTINEL_CHAR)
+        liveKeyboardInput.setSelection(liveKeyboardInput.text.length)
+        isResettingLiveInput = false
+    }
+
+    private fun sendCharImmediate(ch: Char) {
+        val (mod, code) = charToHidUsage(ch)
+        if (code != 0) {
+            sendKeyboardKey(mod, code)
+        }
+    }
+
     private fun charToHidUsage(c: Char): Pair<Int, Int> {
         return when (c) {
             in 'a'..'z' -> 0x00 to (0x04 + (c - 'a'))
-            in 'A'..'Z' -> 0x02 to (0x04 + (c - 'A'))
+            in 'A'..'Z' -> MOD_LEFT_SHIFT to (0x04 + (c - 'A'))
             in '1'..'9' -> 0x00 to (0x1E + (c - '1'))
             '0' -> 0x00 to 0x27
             ' ' -> 0x00 to 0x2C
             '\n' -> 0x00 to 0x28
-            '!' -> 0x02 to 0x1E
-            '@' -> 0x02 to 0x1F
-            '#' -> 0x02 to 0x20
-            '$' -> 0x02 to 0x21
-            '%' -> 0x02 to 0x22
-            '^' -> 0x02 to 0x23
-            '&' -> 0x02 to 0x24
-            '*' -> 0x02 to 0x25
-            '(' -> 0x02 to 0x26
-            ')' -> 0x02 to 0x27
+            '!' -> MOD_LEFT_SHIFT to 0x1E
+            '@' -> MOD_LEFT_SHIFT to 0x1F
+            '#' -> MOD_LEFT_SHIFT to 0x20
+            '$' -> MOD_LEFT_SHIFT to 0x21
+            '%' -> MOD_LEFT_SHIFT to 0x22
+            '^' -> MOD_LEFT_SHIFT to 0x23
+            '&' -> MOD_LEFT_SHIFT to 0x24
+            '*' -> MOD_LEFT_SHIFT to 0x25
+            '(' -> MOD_LEFT_SHIFT to 0x26
+            ')' -> MOD_LEFT_SHIFT to 0x27
             '-' -> 0x00 to 0x2D
-            '_' -> 0x02 to 0x2D
+            '_' -> MOD_LEFT_SHIFT to 0x2D
             '=' -> 0x00 to 0x2E
-            '+' -> 0x02 to 0x2E
+            '+' -> MOD_LEFT_SHIFT to 0x2E
             '[' -> 0x00 to 0x2F
-            '{' -> 0x02 to 0x2F
+            '{' -> MOD_LEFT_SHIFT to 0x2F
             ']' -> 0x00 to 0x30
-            '}' -> 0x02 to 0x30
+            '}' -> MOD_LEFT_SHIFT to 0x30
             '\\' -> 0x00 to 0x31
-            '|' -> 0x02 to 0x31
+            '|' -> MOD_LEFT_SHIFT to 0x31
             ';' -> 0x00 to 0x33
-            ':' -> 0x02 to 0x33
+            ':' -> MOD_LEFT_SHIFT to 0x33
             '\'' -> 0x00 to 0x34
-            '"' -> 0x02 to 0x34
+            '"' -> MOD_LEFT_SHIFT to 0x34
             '`' -> 0x00 to 0x35
-            '~' -> 0x02 to 0x35
+            '~' -> MOD_LEFT_SHIFT to 0x35
             ',' -> 0x00 to 0x36
-            '<' -> 0x02 to 0x36
+            '<' -> MOD_LEFT_SHIFT to 0x36
             '.' -> 0x00 to 0x37
-            '>' -> 0x02 to 0x37
+            '>' -> MOD_LEFT_SHIFT to 0x37
             '/' -> 0x00 to 0x38
-            '?' -> 0x02 to 0x38
+            '?' -> MOD_LEFT_SHIFT to 0x38
             else -> 0x00 to 0x00
         }
     }
@@ -2391,7 +2834,7 @@ class MainActivity : Activity(), SensorEventListener {
                     MotionEvent.ACTION_DOWN -> {
                         v.parent?.requestDisallowInterceptTouchEvent(true)
                         activeMouseButtons = activeMouseButtons or buttonMask
-                        sendMouseReport(activeMouseButtons, 0, 0, 0)
+                        sendMouseReport(activeMouseButtons, 0, 0, 0, 0)
                         background = roundedBox("#0284C7", dp(10))
                         hapticTick()
                         true
@@ -2399,7 +2842,7 @@ class MainActivity : Activity(), SensorEventListener {
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         v.parent?.requestDisallowInterceptTouchEvent(false)
                         activeMouseButtons = activeMouseButtons and buttonMask.inv()
-                        sendMouseReport(activeMouseButtons, 0, 0, 0)
+                        sendMouseReport(activeMouseButtons, 0, 0, 0, 0)
                         background = roundedBox("#334155", dp(10))
                         true
                     }
@@ -2413,9 +2856,9 @@ class MainActivity : Activity(), SensorEventListener {
         return Button(this).apply {
             text = label
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
             typeface = Typeface.DEFAULT_BOLD
-            background = roundedBox(colorHex, dp(10))
+            background = roundedBox(colorHex, dp(9))
             setOnTouchListener { v, event ->
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
@@ -2423,7 +2866,7 @@ class MainActivity : Activity(), SensorEventListener {
                         v.parent?.requestDisallowInterceptTouchEvent(true)
                         gamepadButtonMask = gamepadButtonMask or bitMask
                         sendGamepadReport()
-                        background = roundedBox("#38BDF8", dp(10))
+                        background = roundedBox("#38BDF8", dp(9))
                         hapticTick()
                         true
                     }
@@ -2432,7 +2875,7 @@ class MainActivity : Activity(), SensorEventListener {
                         v.parent?.requestDisallowInterceptTouchEvent(false)
                         gamepadButtonMask = gamepadButtonMask and bitMask.inv()
                         sendGamepadReport()
-                        background = roundedBox(colorHex, dp(10))
+                        background = roundedBox(colorHex, dp(9))
                         true
                     }
                     else -> false
@@ -2445,7 +2888,7 @@ class MainActivity : Activity(), SensorEventListener {
         return Button(this).apply {
             text = label
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             typeface = Typeface.DEFAULT_BOLD
             background = roundedBox("#334155", dp(8))
             setOnTouchListener { v, event ->
@@ -2462,7 +2905,7 @@ class MainActivity : Activity(), SensorEventListener {
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         rootScrollView.isScrollLocked = false
                         v.parent?.requestDisallowInterceptTouchEvent(false)
-                        gamepadHatState = 8 // Null / Centered
+                        gamepadHatState = 8
                         sendGamepadReport()
                         background = roundedBox("#334155", dp(8))
                         true
@@ -2480,28 +2923,21 @@ class MainActivity : Activity(), SensorEventListener {
         }
     }
 
-    private fun createKeyButton(label: String, hidKeyCode: Int, colorHex: String = "#334155"): Button {
-        return createStyledButton(label, colorHex) {
-            hapticTick()
-            sendKeyboardKey(0, hidKeyCode)
-        }
-    }
-
     private fun createStyledButton(label: String, colorHex: String, onClick: () -> Unit): Button {
         return Button(this).apply {
             text = label
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
             typeface = Typeface.DEFAULT_BOLD
             background = roundedBox(colorHex, dp(8))
             setOnClickListener { onClick() }
         }
     }
 
-    private fun weightParams(heightPx: Int = dp(44)): LinearLayout.LayoutParams {
+    private fun weightParams(heightPx: Int = dp(42)): LinearLayout.LayoutParams {
         return LinearLayout.LayoutParams(0, heightPx, 1f).apply {
-            marginStart = dp(4)
-            marginEnd = dp(4)
+            marginStart = dp(3)
+            marginEnd = dp(3)
         }
     }
 
@@ -2519,10 +2955,10 @@ class MainActivity : Activity(), SensorEventListener {
     private fun hapticTick() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator?.vibrate(VibrationEffect.createOneShot(16, VibrationEffect.DEFAULT_AMPLITUDE))
+                vibrator?.vibrate(VibrationEffect.createOneShot(15, VibrationEffect.DEFAULT_AMPLITUDE))
             } else {
                 @Suppress("DEPRECATION")
-                vibrator?.vibrate(16)
+                vibrator?.vibrate(15)
             }
         } catch (_: Exception) {
         }

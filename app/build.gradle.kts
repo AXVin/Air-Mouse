@@ -11,8 +11,8 @@ android {
         applicationId = "com.axvin.airmouse"
         minSdk = 28 // Android 9.0+ required for BluetoothHidDevice API
         targetSdk = 34
-        versionCode = 3
-        versionName = "3.0"
+        versionCode = 4
+        versionName = "4.0"
         setProperty("archivesBaseName", "Air Mouse")
     }
 
