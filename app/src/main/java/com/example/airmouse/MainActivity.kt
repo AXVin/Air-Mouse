@@ -441,6 +441,11 @@ class MainActivity : Activity(), SensorEventListener {
             }
         }.apply { layoutParams = weightParams(dp(34)) })
 
+        btActionsRow.addView(createStyledButton("Scan TV", palette.primary, palette.onPrimary) {
+            hapticTick()
+            showFireTvScannerDialog()
+        }.apply { layoutParams = weightParams(dp(34)) })
+
         btActionsRow.addView(createStyledButton("Refresh", palette.surfaceContainer, palette.onSurface) {
             refreshPairedDevicesUi()
             Toast.makeText(this, "Device list refreshed", Toast.LENGTH_SHORT).show()
@@ -694,6 +699,123 @@ class MainActivity : Activity(), SensorEventListener {
                     } catch (_: Throwable) {
                     }
                 }
+            }
+            .show()
+    }
+
+    /**
+     * Scans for nearby Fire TV Stick / Smart TVs directly from the phone and initiates
+     * pairing from the phone side (which bypasses Fire OS's Class-of-Device filter).
+     */
+    private fun showFireTvScannerDialog() {
+        val listLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+
+        val instructions = TextView(this).apply {
+            text = "1. On your Fire Stick, open:
+" +
+                "   Settings > Controllers & Bluetooth Devices > Other Bluetooth Devices > Add Bluetooth Devices
+
+" +
+                "2. Wait a few seconds below and tap your Fire TV when it appears (or tap 'System Bluetooth Settings'):"
+            setTextColor(palette.onSurface)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            setPadding(0, 0, 0, dp(10))
+        }
+        listLayout.addView(instructions)
+
+        val discoveredContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val scanningLabel = TextView(this).apply {
+            text = "🔍 Scanning for nearby devices..."
+            setTextColor(palette.primary)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, dp(6), 0, dp(6))
+        }
+        discoveredContainer.addView(scanningLabel)
+        listLayout.addView(discoveredContainer)
+
+        var dialogRef: AlertDialog? = null
+
+        btController = BluetoothHidController(
+            context = this,
+            onStatusChanged = { statusText, isConnected, isConnecting ->
+                if (::connectionHeaderStatus.isInitialized) {
+                    connectionHeaderStatus.text = statusText
+                    connectionHeaderStatus.setTextColor(
+                        when {
+                            isConnected -> palette.success
+                            isConnecting -> palette.warning
+                            else -> palette.primary
+                        }
+                    )
+                    if (isConnected) {
+                        hapticTick()
+                        setConnectionCardExpanded(false)
+                    } else if (!isConnecting) {
+                        setConnectionCardExpanded(true)
+                    }
+                }
+            },
+            onDevicesUpdated = {
+                if (::quickSwitchRow.isInitialized) {
+                    rebuildQuickSwitchChips()
+                }
+            },
+            onDiscoveredDevicesUpdated = { devices ->
+                discoveredContainer.removeAllViews()
+                if (devices.isEmpty()) {
+                    discoveredContainer.addView(scanningLabel)
+                } else {
+                    for (dev in devices) {
+                        val name = btController.safeDeviceName(dev)
+                        val btn = createStyledButton("Pair: $name (${dev.address})", palette.surfaceContainer, palette.onSurface) {
+                            hapticTick()
+                            dialogRef?.dismiss()
+                            btController.pairAndConnectDevice(dev)
+                        }.apply {
+                            layoutParams = LinearLayout.LayoutParams(
+                                LinearLayout.LayoutParams.MATCH_PARENT,
+                                dp(42)
+                            ).apply { topMargin = dp(6) }
+                        }
+                        discoveredContainer.addView(btn)
+                    }
+                }
+            }
+        ).also { it.initProfile() }
+
+        btController.startTvDiscovery()
+
+        dialogRef = AlertDialog.Builder(this)
+            .setTitle("Pair with Fire Stick / TV")
+            .setView(listLayout)
+            .setNeutralButton("Make Phone Discoverable") { _, _ ->
+                btController.stopTvDiscovery()
+                try {
+                    startActivity(Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
+                        putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300)
+                    })
+                } catch (_: Throwable) {
+                }
+            }
+            .setPositiveButton("System Bluetooth Settings") { _, _ ->
+                btController.stopTvDiscovery()
+                try {
+                    startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS))
+                } catch (_: Throwable) {
+                }
+            }
+            .setNegativeButton("Close") { dialog, _ ->
+                btController.stopTvDiscovery()
+                dialog.dismiss()
+            }
+            .setOnDismissListener {
+                btController.stopTvDiscovery()
             }
             .show()
     }

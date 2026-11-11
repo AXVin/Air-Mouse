@@ -9,7 +9,10 @@ import android.bluetooth.BluetoothHidDeviceAppQosSettings
 import android.bluetooth.BluetoothHidDeviceAppSdpSettings
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
@@ -17,15 +20,16 @@ import android.os.Looper
 import java.util.concurrent.Executors
 
 /**
- * Manages the Android BluetoothHidDevice service lifecycle, device switching,
- * connection resets, unpairing, and transmitting raw HID reports with full
- * permission & exception guards.
+ * Manages the Android BluetoothHidDevice service lifecycle, active scanning for
+ * Fire TV / Smart TVs (startDiscovery + createBond), device switching, connection resets,
+ * unpairing, and transmitting raw HID reports.
  */
 @SuppressLint("MissingPermission")
 class BluetoothHidController(
     private val context: Context,
     private val onStatusChanged: (statusText: String, isConnected: Boolean, isConnecting: Boolean) -> Unit,
-    private val onDevicesUpdated: () -> Unit
+    private val onDevicesUpdated: () -> Unit,
+    private val onDiscoveredDevicesUpdated: (List<BluetoothDevice>) -> Unit = {}
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val btManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
@@ -36,7 +40,85 @@ class BluetoothHidController(
         private set
 
     val pairedDevices = mutableListOf<BluetoothDevice>()
+    val discoveredDevices = mutableListOf<BluetoothDevice>()
     private val hidExecutor = Executors.newSingleThreadExecutor()
+    private var receiverRegistered = false
+
+    private val bluetoothReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            val action = intent?.action ?: return
+            when (action) {
+                BluetoothDevice.ACTION_FOUND -> {
+                    val device: BluetoothDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                    }
+                    if (device != null && device.bondState != BluetoothDevice.BOND_BONDED) {
+                        val exists = discoveredDevices.any { it.address == device.address }
+                        if (!exists) {
+                            discoveredDevices.add(device)
+                            mainHandler.post { onDiscoveredDevicesUpdated(discoveredDevices.toList()) }
+                        }
+                    }
+                }
+                BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
+                    val device: BluetoothDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                    }
+                    val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)
+                    when (bondState) {
+                        BluetoothDevice.BOND_BONDING -> {
+                            mainHandler.post {
+                                onStatusChanged("🟡 Pairing with ${safeDeviceName(device)}...", false, true)
+                            }
+                        }
+                        BluetoothDevice.BOND_BONDED -> {
+                            mainHandler.post {
+                                refreshPairedDevices()
+                                onDevicesUpdated()
+                                if (device != null) {
+                                    switchToDevice(device)
+                                }
+                            }
+                        }
+                        BluetoothDevice.BOND_NONE -> {
+                            mainHandler.post {
+                                refreshPairedDevices()
+                                onDevicesUpdated()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun registerReceivers() {
+        if (receiverRegistered) return
+        try {
+            val filter = IntentFilter().apply {
+                addAction(BluetoothDevice.ACTION_FOUND)
+                addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+            }
+            context.registerReceiver(bluetoothReceiver, filter)
+            receiverRegistered = true
+        } catch (_: Throwable) {
+        }
+    }
+
+    fun unregisterReceivers() {
+        if (!receiverRegistered) return
+        try {
+            context.unregisterReceiver(bluetoothReceiver)
+        } catch (_: Throwable) {
+        }
+        receiverRegistered = false
+    }
 
     fun hasPermissions(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -50,9 +132,61 @@ class BluetoothHidController(
     fun safeDeviceName(device: BluetoothDevice?): String {
         if (device == null || !hasPermissions()) return "Device"
         return try {
-            device.name ?: device.address ?: "Device"
+            val name = device.name
+            if (!name.isNullOrBlank()) name else (device.address ?: "Device")
         } catch (_: Throwable) {
             "Device"
+        }
+    }
+
+    /**
+     * Scans for nearby discoverable TVs / Fire TV Sticks (which often filter out phones
+     * when scanning from the TV side, but accept pairing initiated from the phone).
+     */
+    fun startTvDiscovery() {
+        if (!hasPermissions()) return
+        registerReceivers()
+        discoveredDevices.clear()
+        onDiscoveredDevicesUpdated(emptyList())
+        try {
+            if (bluetoothAdapter?.isDiscovering == true) {
+                bluetoothAdapter.cancelDiscovery()
+            }
+            bluetoothAdapter?.startDiscovery()
+            mainHandler.post {
+                onStatusChanged("🔵 Scanning for Fire Stick / TV...", false, true)
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
+    fun stopTvDiscovery() {
+        if (!hasPermissions()) return
+        try {
+            if (bluetoothAdapter?.isDiscovering == true) {
+                bluetoothAdapter.cancelDiscovery()
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
+    /**
+     * Initiates Bluetooth bonding (pairing) from the phone to the target Fire Stick / TV
+     * and automatically connects the HID profile once bonded.
+     */
+    fun pairAndConnectDevice(device: BluetoothDevice) {
+        if (!hasPermissions()) return
+        stopTvDiscovery()
+        try {
+            if (device.bondState == BluetoothDevice.BOND_BONDED) {
+                switchToDevice(device)
+            } else {
+                mainHandler.post {
+                    onStatusChanged("🟡 Pairing with ${safeDeviceName(device)}...", false, true)
+                }
+                device.createBond()
+            }
+        } catch (_: Throwable) {
         }
     }
 
@@ -63,6 +197,7 @@ class BluetoothHidController(
             }
             return
         }
+        registerReceivers()
         val adapter = bluetoothAdapter ?: return
         val enabled = try { adapter.isEnabled } catch (_: Throwable) { false }
         if (!enabled) {
@@ -98,7 +233,7 @@ class BluetoothHidController(
                             override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
                                 mainHandler.post {
                                     if (registered) {
-                                        onStatusChanged("🔵 HID Ready — Select a Device", false, false)
+                                        onStatusChanged("🔵 HID Ready — Select or Scan for TV", false, false)
                                         if (pluggedDevice != null) {
                                             switchToDevice(pluggedDevice)
                                         }
@@ -151,12 +286,12 @@ class BluetoothHidController(
             val bonded = bluetoothAdapter?.bondedDevices ?: emptySet()
             pairedDevices.addAll(bonded)
             if (pairedDevices.isEmpty()) {
-                listOf("No Paired Devices (Tap 'Pair New')")
+                listOf("No Paired Devices (Tap 'Scan Fire TV')")
             } else {
                 pairedDevices.map { "${safeDeviceName(it)} (${it.address})" }
             }
         } catch (_: Throwable) {
-            listOf("No Paired Devices (Tap 'Pair New')")
+            listOf("No Paired Devices (Tap 'Scan Fire TV')")
         }
     }
 
@@ -219,6 +354,8 @@ class BluetoothHidController(
     }
 
     fun shutdown() {
+        stopTvDiscovery()
+        unregisterReceivers()
         try {
             hidDevice?.unregisterApp()
             bluetoothAdapter?.closeProfileProxy(BluetoothProfile.HID_DEVICE, hidDevice)
