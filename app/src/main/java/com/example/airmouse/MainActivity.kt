@@ -714,11 +714,8 @@ class MainActivity : Activity(), SensorEventListener {
         }
 
         val instructions = TextView(this).apply {
-            text = "1. On your Fire Stick, open:
-" +
-                "   Settings > Controllers & Bluetooth Devices > Other Bluetooth Devices > Add Bluetooth Devices
-
-" +
+            text = "1. On your Fire Stick, open:\n" +
+                "   Settings > Controllers & Bluetooth Devices > Other Bluetooth Devices > Add Bluetooth Devices\n\n" +
                 "2. Wait a few seconds below and tap your Fire TV when it appears (or tap 'System Bluetooth Settings'):"
             setTextColor(palette.onSurface)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)

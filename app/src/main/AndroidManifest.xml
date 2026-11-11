@@ -2,9 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.example.airmouse">
 
-    <!-- Legacy Bluetooth permissions (Android 9 - 11) -->
+    <!-- Legacy Bluetooth & Discovery permissions (Android 9 - 11) -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" android:maxSdkVersion="30" />
 
     <!-- Android 12+ (API 31+) Bluetooth runtime permissions -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
