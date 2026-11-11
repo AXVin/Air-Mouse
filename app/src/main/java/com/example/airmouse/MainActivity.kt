@@ -12,7 +12,6 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -41,13 +40,11 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
-import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.Spinner
-import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.abs
@@ -57,9 +54,9 @@ import kotlin.math.roundToInt
 /**
  * Air Mouse — Created by AXVin
  *
- * Main controller activity coordinating the Collapsible Connection Bar,
- * Permanent Bottom Navigation Footer (Air Mouse, Keyboard, Media, Gamepad, System Power, Settings),
- * Fullscreen Landscape Keyboard & Gamepad modes, and Material You / Mihon Dynamic Theming.
+ * Coordinates the Collapsible Connection Bar, Permanent Bottom Navigation Footer
+ * (Air Mouse, Keyboard, Media, Gamepad, System Power, Settings), Fullscreen Landscape
+ * Keyboard & Gamepad modes, and Material You / Mihon Dynamic Theming.
  */
 @SuppressLint("MissingPermission", "ClickableViewAccessibility", "SetTextI18n")
 class MainActivity : Activity(), SensorEventListener {
@@ -80,7 +77,7 @@ class MainActivity : Activity(), SensorEventListener {
     private lateinit var btController: BluetoothHidController
 
     // Sensor state
-    private lateinit var sensorManager: SensorManager
+    private var sensorManager: SensorManager? = null
     private var gyroSensor: Sensor? = null
     private var accelSensor: Sensor? = null
     private var isAirMouseTriggerHeld = false
@@ -167,20 +164,28 @@ class MainActivity : Activity(), SensorEventListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
+            runOnUiThread {
+                showDiagnosticErrorScreen(throwable)
+            }
+        }
+        try {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } catch (_: Throwable) {
+        }
 
         settings = AppSettings(this)
         palette = settings.theme.resolvePalette(this, settings.amoledBlack)
 
         vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
-        accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        gyroSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+        accelSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
 
         btController = BluetoothHidController(
             context = this,
             onStatusChanged = { statusText, isConnected, isConnecting ->
-                runOnUiThread {
+                if (::connectionHeaderStatus.isInitialized) {
                     connectionHeaderStatus.text = statusText
                     connectionHeaderStatus.setTextColor(
                         when {
@@ -198,12 +203,48 @@ class MainActivity : Activity(), SensorEventListener {
                 }
             },
             onDevicesUpdated = {
-                runOnUiThread { rebuildQuickSwitchChips() }
+                if (::quickSwitchRow.isInitialized) {
+                    rebuildQuickSwitchChips()
+                }
             }
         )
 
-        buildUserInterface()
-        checkAndRequestPermissions()
+        try {
+            buildUserInterface()
+            checkAndRequestPermissions()
+        } catch (t: Throwable) {
+            showDiagnosticErrorScreen(t)
+        }
+    }
+
+    private fun showDiagnosticErrorScreen(t: Throwable) {
+        try {
+            val scroll = android.widget.ScrollView(this).apply {
+                setBackgroundColor(Color.parseColor("#0F172A"))
+            }
+            val box = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(16), dp(24), dp(16), dp(24))
+            }
+            val title = TextView(this).apply {
+                text = "Air Mouse Diagnostic Report"
+                setTextColor(Color.parseColor("#F87171"))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                typeface = Typeface.DEFAULT_BOLD
+            }
+            val traceText = TextView(this).apply {
+                text = android.util.Log.getStackTraceString(t)
+                setTextColor(Color.WHITE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextIsSelectable(true)
+                setPadding(0, dp(12), 0, 0)
+            }
+            box.addView(title)
+            box.addView(traceText)
+            scroll.addView(box)
+            setContentView(scroll)
+        } catch (_: Throwable) {
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -221,7 +262,10 @@ class MainActivity : Activity(), SensorEventListener {
 
     override fun onPause() {
         super.onPause()
-        sensorManager.unregisterListener(this)
+        try {
+            sensorManager?.unregisterListener(this)
+        } catch (_: Throwable) {
+        }
     }
 
     override fun onDestroy() {
@@ -235,8 +279,11 @@ class MainActivity : Activity(), SensorEventListener {
 
     private fun buildUserInterface() {
         palette = settings.theme.resolvePalette(this, settings.amoledBlack)
-        window.statusBarColor = palette.background
-        window.navigationBarColor = palette.surface
+        try {
+            window.statusBarColor = palette.background
+            window.navigationBarColor = palette.surface
+        } catch (_: Throwable) {
+        }
 
         outerRootLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -269,7 +316,7 @@ class MainActivity : Activity(), SensorEventListener {
         }
 
         connectionHeaderStatus = TextView(this).apply {
-            text = "🔵 Connection: Initializing HID..."
+            text = "🔵 Connection: Ready"
             setTextColor(palette.primary)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             typeface = Typeface.DEFAULT_BOLD
@@ -386,8 +433,11 @@ class MainActivity : Activity(), SensorEventListener {
                 startActivity(Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
                     putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300)
                 })
-            } catch (_: Exception) {
-                startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS))
+            } catch (_: Throwable) {
+                try {
+                    startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS))
+                } catch (_: Throwable) {
+                }
             }
         }.apply { layoutParams = weightParams(dp(34)) })
 
@@ -442,7 +492,6 @@ class MainActivity : Activity(), SensorEventListener {
         outerRootLayout.addView(rootScrollView)
 
         // 3. Permanent Docked Material 3 Bottom Navigation Footer Bar
-        // ("Air Mouse", "Keyboard", "Media", "Gamepad", "System Power", "Settings")
         bottomNavBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -477,7 +526,7 @@ class MainActivity : Activity(), SensorEventListener {
                 }
                 setOnClickListener {
                     hapticTick()
-                    selectTab(index)
+                    selectTab(index, fromUserTap = true)
                 }
             }
 
@@ -508,9 +557,10 @@ class MainActivity : Activity(), SensorEventListener {
         outerRootLayout.addView(bottomNavBar)
         setContentView(outerRootLayout)
 
-        refreshPairedDevicesUi()
-        selectTab(currentTabIndex)
-        applyFullscreenState(isFullscreenActive)
+        if (hasBluetoothPermissions()) {
+            refreshPairedDevicesUi()
+        }
+        selectTab(currentTabIndex, fromUserTap = false)
     }
 
     private fun applyThemeLive() {
@@ -519,28 +569,41 @@ class MainActivity : Activity(), SensorEventListener {
         val savedExpanded = isConnectionCardExpanded
         isConnectionCardExpanded = savedExpanded
         buildUserInterface()
-        selectTab(savedTab)
-        applyFullscreenState(savedFullscreen)
+        selectTab(savedTab, fromUserTap = false)
+        if (savedFullscreen) {
+            applyFullscreenState(true)
+        }
     }
 
     private fun setConnectionCardExpanded(expanded: Boolean) {
         isConnectionCardExpanded = expanded
-        connectionBodyLayout.visibility = if (expanded) View.VISIBLE else View.GONE
-        connectionCollapseArrow.text = if (expanded) "▲ Hide" else "▼ Devices"
+        if (::connectionBodyLayout.isInitialized) {
+            connectionBodyLayout.visibility = if (expanded) View.VISIBLE else View.GONE
+        }
+        if (::connectionCollapseArrow.isInitialized) {
+            connectionCollapseArrow.text = if (expanded) "▲ Hide" else "▼ Devices"
+        }
     }
 
-    private fun selectTab(selectedIndex: Int) {
+    private fun selectTab(selectedIndex: Int, fromUserTap: Boolean) {
         currentTabIndex = selectedIndex
 
-        // Exit fullscreen automatically if switching away from Keyboard (1) or Gamepad (3)
         if (selectedIndex != 1 && selectedIndex != 3 && isFullscreenActive) {
             applyFullscreenState(false)
         }
 
-        requestedOrientation = if (selectedIndex == 1 || selectedIndex == 3) {
-            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        } else {
-            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        if (fromUserTap) {
+            val targetOrientation = if (selectedIndex == 1 || selectedIndex == 3) {
+                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            } else {
+                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            }
+            if (requestedOrientation != targetOrientation) {
+                try {
+                    requestedOrientation = targetOrientation
+                } catch (_: Throwable) {
+                }
+            }
         }
 
         tabItemLayouts.forEachIndexed { idx, _ ->
@@ -565,26 +628,35 @@ class MainActivity : Activity(), SensorEventListener {
 
     private fun applyFullscreenState(fullscreen: Boolean) {
         isFullscreenActive = fullscreen
-        topConnectionWrapper.visibility = if (fullscreen) View.GONE else View.VISIBLE
-        bottomNavBar.visibility = if (fullscreen) View.GONE else View.VISIBLE
+        if (::topConnectionWrapper.isInitialized) {
+            topConnectionWrapper.visibility = if (fullscreen) View.GONE else View.VISIBLE
+        }
+        if (::bottomNavBar.isInitialized) {
+            bottomNavBar.visibility = if (fullscreen) View.GONE else View.VISIBLE
+        }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val controller = window.insetsController
-            if (fullscreen) {
-                controller?.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
-                controller?.systemBarsBehavior =
-                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            } else {
-                controller?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = if (fullscreen) {
-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-                    View.SYSTEM_UI_FLAG_FULLSCREEN or
-                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-            } else {
-                View.SYSTEM_UI_FLAG_VISIBLE
+        window?.decorView?.post {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val controller = window.insetsController
+                    if (fullscreen) {
+                        controller?.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+                        controller?.systemBarsBehavior =
+                            WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    } else {
+                        controller?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+                    }
+                } else {
+                    @Suppress("DEPRECATION")
+                    window.decorView.systemUiVisibility = if (fullscreen) {
+                        View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                            View.SYSTEM_UI_FLAG_FULLSCREEN or
+                            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    } else {
+                        View.SYSTEM_UI_FLAG_VISIBLE
+                    }
+                }
+            } catch (_: Throwable) {
             }
         }
     }
@@ -601,7 +673,7 @@ class MainActivity : Activity(), SensorEventListener {
             return
         }
 
-        val devName = target.name ?: target.address
+        val devName = btController.safeDeviceName(target)
         AlertDialog.Builder(this)
             .setTitle("Permanently Unpair Device?")
             .setMessage(
@@ -617,7 +689,10 @@ class MainActivity : Activity(), SensorEventListener {
                     window.decorView.postDelayed({ refreshPairedDevicesUi() }, 600)
                 } else {
                     Toast.makeText(this, "Opening Bluetooth settings to finish unpairing $devName", Toast.LENGTH_SHORT).show()
-                    startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS))
+                    try {
+                        startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS))
+                    } catch (_: Throwable) {
+                    }
                 }
             }
             .show()
@@ -673,7 +748,6 @@ class MainActivity : Activity(), SensorEventListener {
         padRow.addView(scrollStrip)
         tabRoot.addView(padRow)
 
-        // Mouse Click Buttons Row
         val mouseBtnsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
@@ -689,7 +763,6 @@ class MainActivity : Activity(), SensorEventListener {
         mouseBtnsRow.addView(createHoldMouseButton("RIGHT CLICK", 2), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.2f))
         tabRoot.addView(mouseBtnsRow)
 
-        // Gyro Air-Mouse Trigger Card
         val gyroCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = AppTheme.materialCard(palette.surface, dp(14), palette.outline)
@@ -742,17 +815,32 @@ class MainActivity : Activity(), SensorEventListener {
             ).apply { topMargin = dp(6) }
         }
 
-        val gyroLockSwitch = Switch(this).apply {
-            text = "Lock Air-Mouse"
-            setTextColor(palette.onSurface)
-            thumbTintList = AppTheme.checkboxTintList(palette)
-            setOnCheckedChangeListener { _, isChecked ->
-                isAirMouseLockedOn = isChecked
-                accelCalibrated = false
+        val gyroLockBtn = Button(this).apply {
+            text = if (isAirMouseLockedOn) "✓ Gyro Lock: ON" else "Gyro Lock: OFF"
+            setTextColor(if (isAirMouseLockedOn) palette.onPrimary else palette.onSurface)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            typeface = Typeface.DEFAULT_BOLD
+            background = AppTheme.materialCard(
+                if (isAirMouseLockedOn) palette.primary else palette.surfaceContainer,
+                dp(10),
+                palette.outline
+            )
+            setPadding(dp(12), dp(4), dp(12), dp(4))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(36))
+            setOnClickListener {
                 hapticTick()
+                isAirMouseLockedOn = !isAirMouseLockedOn
+                accelCalibrated = false
+                text = if (isAirMouseLockedOn) "✓ Gyro Lock: ON" else "Gyro Lock: OFF"
+                setTextColor(if (isAirMouseLockedOn) palette.onPrimary else palette.onSurface)
+                background = AppTheme.materialCard(
+                    if (isAirMouseLockedOn) palette.primary else palette.surfaceContainer,
+                    dp(10),
+                    palette.outline
+                )
             }
         }
-        gyroOptionsRow.addView(gyroLockSwitch)
+        gyroOptionsRow.addView(gyroLockBtn)
 
         val sensLabel = TextView(this).apply {
             text = "Speed:"
@@ -777,7 +865,7 @@ class MainActivity : Activity(), SensorEventListener {
         gyroCard.addView(gyroOptionsRow)
         tabRoot.addView(gyroCard)
 
-        // Inline Quick Keyboard Bar (preserved in Air Mouse tab)
+        // Inline Quick Keyboard Bar
         val kbCard = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -908,7 +996,6 @@ class MainActivity : Activity(), SensorEventListener {
             )
         }
 
-        // Top Bar: Shortcut Combos + Fullscreen Toggle Button
         val shortcutStrip = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1336,11 +1423,6 @@ class MainActivity : Activity(), SensorEventListener {
         }
     }
 
-    /**
-     * Velocity-scaled Seek execution:
-     * - Slow turn (mult = 1): Single fine seek step (Right/Left Arrow or single FF/RW pulse).
-     * - Fast turn (mult = 2..6): Sends multi-step burst + Consumer FF/RW for rapid scrubbing.
-     */
     private fun performVelocitySeek(forward: Boolean, multiplier: Int) {
         val pulses = multiplier.coerceIn(1, 6)
         if (seekWheelUseArrowKeys) {
@@ -1397,7 +1479,6 @@ class MainActivity : Activity(), SensorEventListener {
             setPadding(dp(10), dp(8), dp(10), dp(10))
         }
 
-        // Top Bar: Left Triggers + Style Switcher + Fullscreen Toggle + Right Triggers
         val topTriggersRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1727,7 +1808,6 @@ class MainActivity : Activity(), SensorEventListener {
         }
         themeCard.addView(themeTitle)
 
-        // Swatch Grid of all 13 Material You & Mihon Themes
         val themesScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
         }
@@ -1763,17 +1843,17 @@ class MainActivity : Activity(), SensorEventListener {
         themesScroll.addView(themesRow)
         themeCard.addView(themesScroll)
 
-        val amoledCheck = createHighVisibilityCheckBox(
+        val amoledToggle = createMaterialToggleRow(
             label = "Pure Black Dark Mode (AMOLED)",
             initial = settings.amoledBlack
         ) { checked ->
             settings.amoledBlack = checked
             applyThemeLive()
         }
-        themeCard.addView(amoledCheck)
+        themeCard.addView(amoledToggle)
         settingsRoot.addView(themeCard)
 
-        // 2. Trackpad Multi-Finger Gestures Card (High-Contrast Checkmarks)
+        // 2. Trackpad Multi-Finger Gestures Card
         val gesturesCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = AppTheme.materialCard(palette.surface, dp(16), palette.outline)
@@ -1793,19 +1873,19 @@ class MainActivity : Activity(), SensorEventListener {
         }
         gesturesCard.addView(gesturesTitle)
 
-        gesturesCard.addView(createHighVisibilityCheckBox("2-Finger Vertical Scroll", settings.twoFingerVertScroll) {
+        gesturesCard.addView(createMaterialToggleRow("2-Finger Vertical Scroll", settings.twoFingerVertScroll) {
             settings.twoFingerVertScroll = it
         })
-        gesturesCard.addView(createHighVisibilityCheckBox("2-Finger Horizontal Scroll", settings.twoFingerHorizScroll) {
+        gesturesCard.addView(createMaterialToggleRow("2-Finger Horizontal Scroll", settings.twoFingerHorizScroll) {
             settings.twoFingerHorizScroll = it
         })
-        gesturesCard.addView(createHighVisibilityCheckBox("2-Finger Tap for Right Click", settings.twoFingerTapRightClick) {
+        gesturesCard.addView(createMaterialToggleRow("2-Finger Tap for Right Click", settings.twoFingerTapRightClick) {
             settings.twoFingerTapRightClick = it
         })
-        gesturesCard.addView(createHighVisibilityCheckBox("2-Finger Pinch-to-Zoom (Ctrl + Wheel)", settings.pinchToZoom) {
+        gesturesCard.addView(createMaterialToggleRow("2-Finger Pinch-to-Zoom (Ctrl + Wheel)", settings.pinchToZoom) {
             settings.pinchToZoom = it
         })
-        gesturesCard.addView(createHighVisibilityCheckBox("3-Finger Swipes (Back / Forward / Home / Apps)", settings.threeFingerSwipeNav) {
+        gesturesCard.addView(createMaterialToggleRow("3-Finger Swipes (Back / Forward / Home / Apps)", settings.threeFingerSwipeNav) {
             settings.threeFingerSwipeNav = it
         })
         settingsRoot.addView(gesturesCard)
@@ -1830,13 +1910,13 @@ class MainActivity : Activity(), SensorEventListener {
         }
         volCard.addView(volTitle)
 
-        volCard.addView(createHighVisibilityCheckBox(
+        volCard.addView(createMaterialToggleRow(
             "Use Volume Up / Down as Mouse Clicks\n(Vol Up = Left Click, Vol Down = Right Click)",
             settings.volumeButtonsAsMouse
         ) {
             settings.volumeButtonsAsMouse = it
         })
-        volCard.addView(createHighVisibilityCheckBox(
+        volCard.addView(createMaterialToggleRow(
             "Invert Volume Click Buttons\n(Vol Up = Right Click, Vol Down = Left Click)",
             settings.invertVolumeButtons
         ) {
@@ -1889,70 +1969,105 @@ class MainActivity : Activity(), SensorEventListener {
     }
 
     /**
-     * Creates a Material 3 card-wrapped CheckBox with vivid primary checkmark tint
-     * and explicit status badge so checkmarks are highly visible on all themes.
+     * Custom Material 3 high-contrast toggle card row with a vivid checkmark badge (`✓ ON` / `OFF`)
+     * that works reliably across all Android OEM skins without relying on native CheckBox drawables.
      */
-    private fun createHighVisibilityCheckBox(
+    private fun createMaterialToggleRow(
         label: String,
         initial: Boolean,
         onChanged: (Boolean) -> Unit
     ): View {
+        var isCheckedState = initial
+
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             background = AppTheme.materialCard(
                 palette.surfaceContainer,
-                dp(10),
-                if (initial) palette.primary else palette.outline,
-                if (initial) dp(2) else dp(1)
+                dp(12),
+                if (isCheckedState) palette.primary else palette.outline,
+                if (isCheckedState) dp(2) else dp(1)
             )
-            setPadding(dp(10), dp(8), dp(12), dp(8))
+            setPadding(dp(12), dp(10), dp(12), dp(10))
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = dp(6) }
         }
 
-        val checkBox = CheckBox(this).apply {
+        val checkBoxBadge = TextView(this).apply {
+            text = if (isCheckedState) "✓" else ""
+            gravity = Gravity.CENTER
+            setTextColor(palette.onPrimary)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            typeface = Typeface.DEFAULT_BOLD
+            background = AppTheme.materialCard(
+                if (isCheckedState) palette.primary else palette.surface,
+                dp(6),
+                if (isCheckedState) palette.primary else palette.onSurfaceVariant,
+                dp(2)
+            )
+            layoutParams = LinearLayout.LayoutParams(dp(26), dp(26)).apply {
+                marginEnd = dp(12)
+            }
+        }
+
+        val labelTv = TextView(this).apply {
             text = label
-            isChecked = initial
             setTextColor(palette.onSurface)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             typeface = Typeface.DEFAULT_BOLD
-            buttonTintList = AppTheme.checkboxTintList(palette)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
 
         val statusPill = TextView(this).apply {
-            text = if (initial) "ON" else "OFF"
-            setTextColor(if (initial) palette.onPrimary else palette.onSurfaceVariant)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+            text = if (isCheckedState) "ON" else "OFF"
+            setTextColor(if (isCheckedState) palette.onPrimary else palette.onSurfaceVariant)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
             typeface = Typeface.DEFAULT_BOLD
             background = AppTheme.materialCard(
-                if (initial) palette.primary else palette.surface,
-                dp(6)
+                if (isCheckedState) palette.primary else palette.surface,
+                dp(8),
+                palette.outline
             )
-            setPadding(dp(8), dp(3), dp(8), dp(3))
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = dp(8) }
         }
 
-        checkBox.setOnCheckedChangeListener { _, checked ->
+        row.setOnClickListener {
             hapticTick()
-            onChanged(checked)
-            statusPill.text = if (checked) "ON" else "OFF"
-            statusPill.setTextColor(if (checked) palette.onPrimary else palette.onSurfaceVariant)
-            statusPill.background = AppTheme.materialCard(
-                if (checked) palette.primary else palette.surface,
-                dp(6)
+            isCheckedState = !isCheckedState
+            onChanged(isCheckedState)
+
+            checkBoxBadge.text = if (isCheckedState) "✓" else ""
+            checkBoxBadge.background = AppTheme.materialCard(
+                if (isCheckedState) palette.primary else palette.surface,
+                dp(6),
+                if (isCheckedState) palette.primary else palette.onSurfaceVariant,
+                dp(2)
             )
+
+            statusPill.text = if (isCheckedState) "ON" else "OFF"
+            statusPill.setTextColor(if (isCheckedState) palette.onPrimary else palette.onSurfaceVariant)
+            statusPill.background = AppTheme.materialCard(
+                if (isCheckedState) palette.primary else palette.surface,
+                dp(8),
+                palette.outline
+            )
+
             row.background = AppTheme.materialCard(
                 palette.surfaceContainer,
-                dp(10),
-                if (checked) palette.primary else palette.outline,
-                if (checked) dp(2) else dp(1)
+                dp(12),
+                if (isCheckedState) palette.primary else palette.outline,
+                if (isCheckedState) dp(2) else dp(1)
             )
         }
 
-        row.addView(checkBox)
+        row.addView(checkBoxBadge)
+        row.addView(labelTv)
         row.addView(statusPill)
         return row
     }
@@ -2075,9 +2190,9 @@ class MainActivity : Activity(), SensorEventListener {
                         threeGestureFired = true
                         hapticTick()
                         if (dx < 0) {
-                            btController.sendConsumerKey(0x0224) // AC Back
+                            btController.sendConsumerKey(0x0224)
                         } else {
-                            btController.sendConsumerKey(0x0225) // AC Forward
+                            btController.sendConsumerKey(0x0225)
                         }
                     } else if (abs(dy) > threshold && abs(dy) > abs(dx)) {
                         threeGestureFired = true
@@ -2217,11 +2332,14 @@ class MainActivity : Activity(), SensorEventListener {
     // =========================================================================
 
     private fun registerSensors() {
-        sensorManager.unregisterListener(this)
-        if (gyroSensor != null) {
-            sensorManager.registerListener(this, gyroSensor, SensorManager.SENSOR_DELAY_GAME)
-        } else if (accelSensor != null) {
-            sensorManager.registerListener(this, accelSensor, SensorManager.SENSOR_DELAY_GAME)
+        try {
+            sensorManager?.unregisterListener(this)
+            if (gyroSensor != null) {
+                sensorManager?.registerListener(this, gyroSensor, SensorManager.SENSOR_DELAY_GAME)
+            } else if (accelSensor != null) {
+                sensorManager?.registerListener(this, accelSensor, SensorManager.SENSOR_DELAY_GAME)
+            }
+        } catch (_: Throwable) {
         }
     }
 
@@ -2289,6 +2407,7 @@ class MainActivity : Activity(), SensorEventListener {
     // =========================================================================
 
     private fun refreshPairedDevicesUi() {
+        if (!::deviceAdapter.isInitialized) return
         val names = btController.refreshPairedDevices()
         isUserSelectingDevice = false
         deviceAdapter.clear()
@@ -2298,6 +2417,7 @@ class MainActivity : Activity(), SensorEventListener {
     }
 
     private fun rebuildQuickSwitchChips() {
+        if (!::quickSwitchRow.isInitialized) return
         quickSwitchRow.removeAllViews()
         if (btController.pairedDevices.isEmpty()) return
 
@@ -2305,8 +2425,9 @@ class MainActivity : Activity(), SensorEventListener {
             val isCurrent = btController.connectedDevice?.address == device.address
             val chipBg = if (isCurrent) palette.primary else palette.surfaceContainer
             val chipText = if (isCurrent) palette.onPrimary else palette.onSurface
+            val devName = btController.safeDeviceName(device)
             val chipBtn = Button(this).apply {
-                text = if (isCurrent) "● ${device.name ?: "Device"}" else (device.name ?: "Device")
+                text = if (isCurrent) "● $devName" else devName
                 setTextColor(chipText)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                 typeface = Typeface.DEFAULT_BOLD
@@ -2348,18 +2469,13 @@ class MainActivity : Activity(), SensorEventListener {
     private fun openExternalUrl(url: String) {
         try {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             Toast.makeText(this, url, Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun hasBluetoothPermissions(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
-                checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
-        } else {
-            true
-        }
+        return btController.hasPermissions()
     }
 
     private fun checkAndRequestPermissions() {
@@ -2371,7 +2487,10 @@ class MainActivity : Activity(), SensorEventListener {
             ).filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
 
             if (needed.isNotEmpty()) {
-                requestPermissions(needed.toTypedArray(), REQ_PERMISSIONS)
+                try {
+                    requestPermissions(needed.toTypedArray(), REQ_PERMISSIONS)
+                } catch (_: Throwable) {
+                }
             }
         }
     }
@@ -2519,7 +2638,7 @@ class MainActivity : Activity(), SensorEventListener {
                 @Suppress("DEPRECATION")
                 vibrator?.vibrate(14)
             }
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
         }
     }
 
