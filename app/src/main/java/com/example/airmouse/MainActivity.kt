@@ -184,6 +184,7 @@ class MainActivity : Activity(), SensorEventListener {
 
         btController = BluetoothHidController(
             context = this,
+            iosCompatibilityMode = settings.iosCompatibilityMode,
             onStatusChanged = { statusText, isConnected, isConnecting ->
                 if (::connectionHeaderStatus.isInitialized) {
                     connectionHeaderStatus.text = statusText
@@ -738,53 +739,27 @@ class MainActivity : Activity(), SensorEventListener {
 
         var dialogRef: AlertDialog? = null
 
-        btController = BluetoothHidController(
-            context = this,
-            onStatusChanged = { statusText, isConnected, isConnecting ->
-                if (::connectionHeaderStatus.isInitialized) {
-                    connectionHeaderStatus.text = statusText
-                    connectionHeaderStatus.setTextColor(
-                        when {
-                            isConnected -> palette.success
-                            isConnecting -> palette.warning
-                            else -> palette.primary
-                        }
-                    )
-                    if (isConnected) {
+        btController.onDiscoveredDevicesUpdated = { devices ->
+            discoveredContainer.removeAllViews()
+            if (devices.isEmpty()) {
+                discoveredContainer.addView(scanningLabel)
+            } else {
+                for (dev in devices) {
+                    val name = btController.safeDeviceName(dev)
+                    val btn = createStyledButton("Pair: $name (${dev.address})", palette.surfaceContainer, palette.onSurface) {
                         hapticTick()
-                        setConnectionCardExpanded(false)
-                    } else if (!isConnecting) {
-                        setConnectionCardExpanded(true)
+                        dialogRef?.dismiss()
+                        btController.pairAndConnectDevice(dev)
+                    }.apply {
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT,
+                            dp(42)
+                        ).apply { topMargin = dp(6) }
                     }
-                }
-            },
-            onDevicesUpdated = {
-                if (::quickSwitchRow.isInitialized) {
-                    rebuildQuickSwitchChips()
-                }
-            },
-            onDiscoveredDevicesUpdated = { devices ->
-                discoveredContainer.removeAllViews()
-                if (devices.isEmpty()) {
-                    discoveredContainer.addView(scanningLabel)
-                } else {
-                    for (dev in devices) {
-                        val name = btController.safeDeviceName(dev)
-                        val btn = createStyledButton("Pair: $name (${dev.address})", palette.surfaceContainer, palette.onSurface) {
-                            hapticTick()
-                            dialogRef?.dismiss()
-                            btController.pairAndConnectDevice(dev)
-                        }.apply {
-                            layoutParams = LinearLayout.LayoutParams(
-                                LinearLayout.LayoutParams.MATCH_PARENT,
-                                dp(42)
-                            ).apply { topMargin = dp(6) }
-                        }
-                        discoveredContainer.addView(btn)
-                    }
+                    discoveredContainer.addView(btn)
                 }
             }
-        ).also { it.initProfile() }
+        }
 
         btController.startTvDiscovery()
 
@@ -2009,6 +1984,45 @@ class MainActivity : Activity(), SensorEventListener {
         })
         settingsRoot.addView(gesturesCard)
 
+        // 2b. iOS / iPadOS AssistiveTouch Compatibility Card
+        val iosCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = AppTheme.materialCard(palette.surface, dp(16), palette.outline)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(10) }
+        }
+
+        val iosTitle = TextView(this).apply {
+            text = "iOS / iPadOS Compatibility Mode"
+            setTextColor(palette.primary)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 0, 0, dp(4))
+        }
+        iosCard.addView(iosTitle)
+
+        iosCard.addView(createMaterialToggleRow(
+            "iOS Mouse & Keyboard Mode (No Gamepad)
+" +
+                "Registers a pure 4-byte Mouse + Keyboard descriptor for iPhone/iPad AssistiveTouch. " +
+                "After toggling, Forget/Unpair and re-pair via 'Pair New'.",
+            settings.iosCompatibilityMode
+        ) { checked ->
+            settings.iosCompatibilityMode = checked
+            btController.iosCompatibilityMode = checked
+            btController.resetConnection()
+            Toast.makeText(
+                this,
+                if (checked) "iOS Compatibility Mode ON — Re-registered HID profile"
+                else "Full 5-in-1 TV/Gamepad Mode ON — Re-registered HID profile",
+                Toast.LENGTH_LONG
+            ).show()
+        })
+        settingsRoot.addView(iosCard)
+
         // 3. Hardware Volume Button Mouse Clicks Card
         val volCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -2042,6 +2056,148 @@ class MainActivity : Activity(), SensorEventListener {
             settings.invertVolumeButtons = it
         })
         settingsRoot.addView(volCard)
+
+        // 3b. App Updates Card (Check for Updates on GitHub Releases)
+        val updateCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = AppTheme.materialCard(palette.surface, dp(16), palette.outline)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(10) }
+        }
+
+        val currentVerName = UpdateChecker.getInstalledVersionName(this)
+        val updateTitle = TextView(this).apply {
+            text = "App Updates • Installed: v$currentVerName"
+            setTextColor(palette.primary)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 0, 0, dp(6))
+        }
+        updateCard.addView(updateTitle)
+
+        val repoRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(8) }
+        }
+
+        val repoLabel = TextView(this).apply {
+            text = "GitHub Repo:"
+            setTextColor(palette.onSurfaceVariant)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 0, dp(8), 0)
+        }
+        repoRow.addView(repoLabel)
+
+        val repoInput = EditText(this).apply {
+            setText(settings.githubRepo)
+            hint = "AXVin/Air-Mouse"
+            setHintTextColor(palette.onSurfaceVariant)
+            setTextColor(palette.onSurface)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            isSingleLine = true
+            background = AppTheme.materialCard(palette.surfaceContainer, dp(8), palette.outline)
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    settings.githubRepo = s?.toString()?.trim() ?: "AXVin/Air-Mouse"
+                }
+            })
+        }
+        repoRow.addView(repoInput)
+        updateCard.addView(repoRow)
+
+        val checkUpdateBtn = Button(this).apply {
+            text = "🔄 Check for Updates on GitHub"
+            setTextColor(palette.onPrimary)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            typeface = Typeface.DEFAULT_BOLD
+            background = AppTheme.materialCard(palette.primary, dp(10))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(42)
+            )
+            setOnClickListener {
+                hapticTick()
+                val btnRef = this
+                btnRef.isEnabled = false
+                btnRef.text = "⏳ Checking GitHub Releases..."
+                val slug = repoInput.text?.toString()?.trim().orEmpty().ifEmpty { settings.githubRepo }
+                settings.githubRepo = slug
+
+                UpdateChecker.checkForUpdates(this@MainActivity, slug) { result ->
+                    btnRef.isEnabled = true
+                    btnRef.text = "🔄 Check for Updates on GitHub"
+                    when (result) {
+                        is UpdateChecker.UpdateResult.UpdateAvailable -> {
+                            AlertDialog.Builder(this@MainActivity)
+                                .setTitle("Update Available: ${result.latestTag}")
+                                .setMessage(
+                                    "A newer version of Air Mouse is available on GitHub!
+
+" +
+                                        "• Installed version: v${result.currentVersion}
+" +
+                                        "• Latest release: ${result.latestTag}
+
+" +
+                                        "Release Notes:
+${result.releaseNotes}"
+                                )
+                                .setPositiveButton("Download & Update APK") { dialog, _ ->
+                                    dialog.dismiss()
+                                    openExternalUrl(result.apkDownloadUrl)
+                                }
+                                .setNeutralButton("View on GitHub") { dialog, _ ->
+                                    dialog.dismiss()
+                                    openExternalUrl(result.releasePageUrl)
+                                }
+                                .setNegativeButton("Later") { dialog, _ ->
+                                    dialog.dismiss()
+                                }
+                                .show()
+                        }
+                        is UpdateChecker.UpdateResult.UpToDate -> {
+                            AlertDialog.Builder(this@MainActivity)
+                                .setTitle("Up to Date")
+                                .setMessage(
+                                    "You are running the latest version of Air Mouse!
+
+" +
+                                        "• Installed version: v${result.currentVersion}
+" +
+                                        "• Latest GitHub release: ${result.latestTag}"
+                                )
+                                .setPositiveButton("OK") { dialog, _ -> dialog.dismiss() }
+                                .show()
+                        }
+                        is UpdateChecker.UpdateResult.Error -> {
+                            AlertDialog.Builder(this@MainActivity)
+                                .setTitle("Update Check Failed")
+                                .setMessage(result.message)
+                                .setPositiveButton("Open GitHub Releases") { dialog, _ ->
+                                    dialog.dismiss()
+                                    openExternalUrl("https://github.com/$slug/releases")
+                                }
+                                .setNegativeButton("Close") { dialog, _ -> dialog.dismiss() }
+                                .show()
+                        }
+                    }
+                }
+            }
+        }
+        updateCard.addView(checkUpdateBtn)
+        settingsRoot.addView(updateCard)
 
         // 4. Support Creator (AXVin) Card inside Settings
         val supportCard = LinearLayout(this).apply {

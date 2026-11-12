@@ -25,6 +25,14 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean("amoled_black", false)
         set(value) = prefs.edit().putBoolean("amoled_black", value).apply()
 
+    var iosCompatibilityMode: Boolean
+        get() = prefs.getBoolean("ios_compat_mode", false)
+        set(value) = prefs.edit().putBoolean("ios_compat_mode", value).apply()
+
+    var githubRepo: String
+        get() = prefs.getString("github_repo", "AXVin/Air-Mouse") ?: "AXVin/Air-Mouse"
+        set(value) = prefs.edit().putString("github_repo", value.trim()).apply()
+
     var twoFingerVertScroll: Boolean
         get() = prefs.getBoolean("two_vert_scroll", true)
         set(value) = prefs.edit().putBoolean("two_vert_scroll", value).apply()

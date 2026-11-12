@@ -27,9 +27,10 @@ import java.util.concurrent.Executors
 @SuppressLint("MissingPermission")
 class BluetoothHidController(
     private val context: Context,
+    var iosCompatibilityMode: Boolean = false,
     private val onStatusChanged: (statusText: String, isConnected: Boolean, isConnecting: Boolean) -> Unit,
     private val onDevicesUpdated: () -> Unit,
-    private val onDiscoveredDevicesUpdated: (List<BluetoothDevice>) -> Unit = {}
+    var onDiscoveredDevicesUpdated: (List<BluetoothDevice>) -> Unit = {}
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val btManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
@@ -215,12 +216,22 @@ class BluetoothHidController(
                     val hid = proxy as? BluetoothHidDevice ?: return
                     hidDevice = hid
 
+                    val descriptorBytes = if (iosCompatibilityMode) {
+                        HidDescriptor.IOS_COMPAT_DESCRIPTOR_BYTES
+                    } else {
+                        HidDescriptor.DESCRIPTOR_BYTES
+                    }
+                    val subclass = if (iosCompatibilityMode) {
+                        BluetoothHidDevice.SUBCLASS1_MOUSE
+                    } else {
+                        BluetoothHidDevice.SUBCLASS1_COMBO
+                    }
                     val sdpSettings = BluetoothHidDeviceAppSdpSettings(
                         "Air Mouse",
-                        "Air Mouse, Keyboard, Media & Gamepad by AXVin",
+                        "Air Mouse & Keyboard by AXVin",
                         "AXVin",
-                        BluetoothHidDevice.SUBCLASS1_COMBO,
-                        HidDescriptor.DESCRIPTOR_BYTES
+                        subclass,
+                        descriptorBytes
                     )
 
                     val qosOut = BluetoothHidDeviceAppQosSettings(
@@ -367,14 +378,39 @@ class BluetoothHidController(
         val hid = hidDevice ?: return
         val target = connectedDevice ?: return
         try {
-            val report = byteArrayOf(
-                buttons.toByte(),
-                dx.coerceIn(-127, 127).toByte(),
-                dy.coerceIn(-127, 127).toByte(),
-                wheel.coerceIn(-127, 127).toByte(),
-                panH.coerceIn(-127, 127).toByte()
-            )
-            hid.sendReport(target, HidDescriptor.REPORT_ID_MOUSE, report)
+            if (iosCompatibilityMode) {
+                if (panH != 0 && wheel == 0) {
+                    // In iOS 4-byte mouse mode, horizontal scroll uses Shift + Wheel
+                    val shiftDown = byteArrayOf(HidDescriptor.MOD_LEFT_SHIFT.toByte(), 0, 0, 0, 0, 0, 0, 0)
+                    val shiftUp = byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0)
+                    hid.sendReport(target, HidDescriptor.REPORT_ID_KEYBOARD, shiftDown)
+                    val hReport = byteArrayOf(
+                        buttons.toByte(),
+                        0,
+                        0,
+                        panH.coerceIn(-127, 127).toByte()
+                    )
+                    hid.sendReport(target, HidDescriptor.REPORT_ID_MOUSE, hReport)
+                    hid.sendReport(target, HidDescriptor.REPORT_ID_KEYBOARD, shiftUp)
+                    return
+                }
+                val report4 = byteArrayOf(
+                    buttons.toByte(),
+                    dx.coerceIn(-127, 127).toByte(),
+                    dy.coerceIn(-127, 127).toByte(),
+                    wheel.coerceIn(-127, 127).toByte()
+                )
+                hid.sendReport(target, HidDescriptor.REPORT_ID_MOUSE, report4)
+            } else {
+                val report5 = byteArrayOf(
+                    buttons.toByte(),
+                    dx.coerceIn(-127, 127).toByte(),
+                    dy.coerceIn(-127, 127).toByte(),
+                    wheel.coerceIn(-127, 127).toByte(),
+                    panH.coerceIn(-127, 127).toByte()
+                )
+                hid.sendReport(target, HidDescriptor.REPORT_ID_MOUSE, report5)
+            }
         } catch (_: Throwable) {
         }
     }

@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.airmouse">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Internet permission for GitHub Release Update Checker -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Legacy Bluetooth & Discovery permissions (Android 9 - 11) -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
