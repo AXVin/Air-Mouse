@@ -3,7 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-val baseVersionName = "6.0"
+val baseVersionName = "6.1.1"
 val resolvedVersionName = (project.findProperty("appVersionName") as? String)?.ifBlank { null } ?: baseVersionName
 val resolvedVersionCode = (project.findProperty("appVersionCode") as? String)?.toIntOrNull()
     ?: System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()?.plus(100)

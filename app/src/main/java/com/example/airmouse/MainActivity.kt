@@ -2005,8 +2005,7 @@ class MainActivity : Activity(), SensorEventListener {
         iosCard.addView(iosTitle)
 
         iosCard.addView(createMaterialToggleRow(
-            "iOS Mouse & Keyboard Mode (No Gamepad)
-" +
+            "iOS Mouse & Keyboard Mode (No Gamepad)\n" +
                 "Registers a pure 4-byte Mouse + Keyboard descriptor for iPhone/iPad AssistiveTouch. " +
                 "After toggling, Forget/Unpair and re-pair via 'Pair New'.",
             settings.iosCompatibilityMode
@@ -2143,16 +2142,10 @@ class MainActivity : Activity(), SensorEventListener {
                             AlertDialog.Builder(this@MainActivity)
                                 .setTitle("Update Available: ${result.latestTag}")
                                 .setMessage(
-                                    "A newer version of Air Mouse is available on GitHub!
-
-" +
-                                        "• Installed version: v${result.currentVersion}
-" +
-                                        "• Latest release: ${result.latestTag}
-
-" +
-                                        "Release Notes:
-${result.releaseNotes}"
+                                    "A newer version of Air Mouse is available on GitHub!\n\n" +
+                                        "• Installed version: v${result.currentVersion}\n" +
+                                        "• Latest release: ${result.latestTag}\n\n" +
+                                        "Release Notes:\n${result.releaseNotes}"
                                 )
                                 .setPositiveButton("Download & Update APK") { dialog, _ ->
                                     dialog.dismiss()
@@ -2171,11 +2164,8 @@ ${result.releaseNotes}"
                             AlertDialog.Builder(this@MainActivity)
                                 .setTitle("Up to Date")
                                 .setMessage(
-                                    "You are running the latest version of Air Mouse!
-
-" +
-                                        "• Installed version: v${result.currentVersion}
-" +
+                                    "You are running the latest version of Air Mouse!\n\n" +
+                                        "• Installed version: v${result.currentVersion}\n" +
                                         "• Latest GitHub release: ${result.latestTag}"
                                 )
                                 .setPositiveButton("OK") { dialog, _ -> dialog.dismiss() }
